@@ -1,13 +1,10 @@
 import os
 import shutil
 import glob
-import pandas as pd
 import h5py
-import json 
-import numpy as np
 
-OUTPUT_DIR = "/kaggle/working/brain-to-text-25-minimal/t15_copyTask_neuralData/hdf5_data_final"
-SRC_DIR = "/kaggle/input/brain-to-text-25-data/t15_copyTask_neuralData/hdf5_data_final"
+OUTPUT_DIR = "/kaggle/working/brain-to-text-25-minimal-shirley/t15_copyTask_neuralData/hdf5_data_final"
+SRC_DIR = "/kaggle/input/brain-to-text-25/t15_copyTask_neuralData/hdf5_data_final"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 SESSIONS_INCLUDED = {'t15.2023.08.13', 't15.2023.08.18', 't15.2023.08.20', 't15.2023.08.11'}
 BLOCK_VAL_TEST_SPLIT = {
@@ -19,8 +16,7 @@ BLOCK_VAL_TEST_SPLIT = {
 ### HELPER FUNCTIONS ###
 
 def save_h5py_file(file_path, data):
-    """Inverse of load_h5py_file."""
-    # Open the HDF5 file for writing
+    """Save data to HDF5 file matching original format exactly."""
     with h5py.File(file_path, 'w') as f:
         num_trials = len(data['neural_features'])
         
@@ -34,8 +30,10 @@ def save_h5py_file(file_path, data):
             # Save seq_class_ids and transcription if they exist
             if data['seq_class_ids'][i] is not None:
                 g.create_dataset('seq_class_ids', data=data['seq_class_ids'][i])
+            
+            # Transcription is int32, same as seq_class_ids
             if data['transcriptions'][i] is not None:
-                g.create_dataset('transcription', data=np.array(data['transcriptions'][i], dtype='S'))  # Save strings as bytes
+                g.create_dataset('transcription', data=data['transcriptions'][i])
             
             # Save scalar attributes
             g.attrs['n_time_steps'] = data['n_time_steps'][i]
@@ -75,7 +73,7 @@ def load_h5py_file(file_path):
             seq_class_ids = g['seq_class_ids'][:] if 'seq_class_ids' in g else None
             seq_len = g.attrs['seq_len'] if 'seq_len' in g.attrs else None
             transcription = g['transcription'][:] if 'transcription' in g else None
-            sentence_label = g.attrs['sentence_label'][:] if 'sentence_label' in g.attrs else None
+            sentence_label = g.attrs['sentence_label'] if 'sentence_label' in g.attrs else None
             session = g.attrs['session']
             block_num = g.attrs['block_num']
             trial_num = g.attrs['trial_num']
@@ -121,13 +119,9 @@ for file_path in glob.glob(pattern, recursive=True):
         except Exception as e:
             print(f"Failed to delete {file_path}: {e}")
 
-# Debugging: print all files we have to work with in our minimal dataset
-# files = glob.glob(os.path.join(OUTPUT_DIR, "**", "*"), recursive=True)
-
-# files = [f for f in files if os.path.isfile(f)]
-
-# for f in files:
-#     print(f)
+# Get all files to work with
+files = glob.glob(os.path.join(OUTPUT_DIR, "**", "*"), recursive=True)
+files = [f for f in files if os.path.isfile(f)]
 
 sessions_included = set([os.path.basename(os.path.dirname(f)) for f in files])
 print(f"Sessions Included = {sessions_included}")
