@@ -1,12 +1,20 @@
+"""
+Adapted from model_training/evaluate_model.py.
+Removes unnecessary LM code, tracks various metrics (loss, PER, accuracy), and allows
+evaluating existing predictions from a CSV file.
+"""
+import sys
 import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../model_training'))
+
 import torch
 import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
 import time
 from tqdm import tqdm
-import editdistance
 import argparse
+import pandas as pd
 
 from rnn_model import GRUDecoder
 from evaluate_model_helpers import *
@@ -28,7 +36,53 @@ parser.add_argument('--gpu_number', type=int, default=1,
 parser.add_argument('--sessions', type=str, nargs='+', default=None,
                     help='Specify one or more sessions to evaluate (e.g., "t15.2023.08.18" "t15.2023.08.20"). '
                          'If not specified, all sessions in the model config will be evaluated.')
+parser.add_argument('--phoneme_predictions_csv', type=str, default=None,
+                    help='If provided, skip phoneme prediction and only run analyze_predictions.')
 args = parser.parse_args()
+
+
+#---------- EVALUATE EXISTING PREDICTIONS ----------#
+
+def analyze_predictions(predictions_csv):
+    df = pd.read_csv(predictions_csv)
+    
+    overall_avg = df['trial_acc'].mean()
+    print(f"Overall average trial accuracy: {overall_avg:.4f}")
+
+    # session_avg = df.groupby('session')['trial_acc'].mean()
+    # print("\nAverage accuracy per session:")
+    # print(session_avg)
+
+    # Calculate AGGREGATE PER
+    total_edit_distance = 0
+    total_phoneme_length = 0
+    for index, row in df.iterrows():
+        pred_seq = row['true_phoneme'].split('-')
+        true_seq = row['true_phoneme'].split('-')
+
+        ed = row['trial_ed']
+        true_len = len(true_seq)
+        
+        total_edit_distance += ed
+        total_phoneme_length += true_len
+            
+    aggregate_per = total_edit_distance / total_phoneme_length
+    print(f"Aggregate Phoneme Error Rate (PER): {aggregate_per:.4f}")
+        
+    avg_loss = df['trial_ctc_loss'].mean()
+    print(f"Average Validation Loss: {avg_loss:.4f}")
+
+if args.phoneme_predictions_csv is not None:
+    predictions_path = args.predictions_path
+    df = pd.read_csv(predictions_path)
+    df.head()
+
+    print(f"Analyzing existing predictions from {predictions_path}...")
+    analyze_predictions(predictions_path)
+    exit(0)
+
+
+#---------- LOAD A MODEL TO GENERATE PHONEME PREDICTIONS ----------#
 
 # paths to model and data directories
 # Note: these paths are relative to the current working directory
@@ -241,3 +295,5 @@ print(f"Average PER = {total_ed/total_length_denom}")
 df.to_csv(output_file, index=False)
 
 print(f"Saved phoneme predictions, true sequences, and trial-level accuracy to {output_file}")
+
+analyze_predictions(output_file)
