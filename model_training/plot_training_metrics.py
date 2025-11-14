@@ -210,3 +210,6 @@ if __name__ == "__main__":
     
     plot_training_metrics(metrics, args, output_filename=args_cmd.modelname)
     print("\nPlots generated successfully!")
+#example of how you use it
+# !cd /kaggle/working/nejm-brain-to-text/model_training/ && \
+# python plot_training_metrics.py --metrics_file trained_models/minimal_baseline/training_metrics.pkl --modelname baseline_adamW
