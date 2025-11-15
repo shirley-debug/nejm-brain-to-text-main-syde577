@@ -54,8 +54,7 @@ class BrainToTextDecoder_Trainer:
         self.val_loader = None 
 
         self.transform_args = self.args['dataset']['data_transforms']
-        if self.transform_args['time_masking'] > 0:
-            self.logger.info(f"Applying time_masking with ratio={self.transform_args['time_masking']}")
+
 
         # Create output directory
         if args['mode'] == 'train':
@@ -77,6 +76,9 @@ class BrainToTextDecoder_Trainer:
             fh = logging.FileHandler(str(pathlib.Path(self.args['output_dir'],'training_log')))
             fh.setFormatter(formatter)
             self.logger.addHandler(fh)
+
+            if self.transform_args['time_masking'] > 0:
+                self.logger.info(f"Applying time_masking with ratio={self.transform_args['time_masking']}")
 
         # Always print logs to stdout
         sh = logging.StreamHandler(sys.stdout)
@@ -495,6 +497,7 @@ class BrainToTextDecoder_Trainer:
                 features = features[:, cut:, :]
                 n_time_steps = n_time_steps - cut
 
+            # TODO: implement fixes https://chatgpt.com/c/6918e990-4648-8325-b1a8-05e804fb2fa8
             # random contiguous time masking (variable-length aware)
             if self.transform_args['time_masking'] > 0:
                 mask_ratio = self.transform_args['time_masking']
