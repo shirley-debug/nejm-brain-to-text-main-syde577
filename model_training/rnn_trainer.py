@@ -54,6 +54,8 @@ class BrainToTextDecoder_Trainer:
         self.val_loader = None 
 
         self.transform_args = self.args['dataset']['data_transforms']
+        if self.transform_args['time_masking'] > 0:
+            self.logger.info(f"Applying time_masking with ratio={self.transform_args['time_masking']}")
 
         # Create output directory
         if args['mode'] == 'train':
@@ -497,7 +499,6 @@ class BrainToTextDecoder_Trainer:
             if self.transform_args['time_masking'] > 0:
                 mask_ratio = self.transform_args['time_masking']
                 assert 0 < mask_ratio < 1
-                self.logger.info(f"APPLYING TIME MASKING with mask_ratio={mask_ratio}")
 
                 # n_time_steps must be a 1D tensor of true lengths
                 assert n_time_steps.ndim == 1 and n_time_steps.shape[0] == batch_size
@@ -547,8 +548,6 @@ class BrainToTextDecoder_Trainer:
 
                 # 12) Apply mask
                 features[mask] = 0.0
-            else:
-                self.logger.info("NO TIME MASKING.")
 
 
             # feature masking
