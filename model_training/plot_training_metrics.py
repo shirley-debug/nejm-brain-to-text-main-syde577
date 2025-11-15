@@ -1,4 +1,3 @@
-%%writefile /kaggle/working/nejm-brain-to-text/model_training/plot_training_metrics.py
 """
 Plot training metrics from a saved training_metrics.pkl file.
 This script loads the metrics saved by run_training_sgd1.py and generates diagnostic plots.
