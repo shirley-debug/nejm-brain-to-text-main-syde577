@@ -22,7 +22,7 @@ torch.set_float32_matmul_precision('high') # makes float32 matmuls faster on som
 torch.backends.cudnn.deterministic = True # makes training more reproducible
 torch._dynamo.config.cache_size_limit = 64
 
-from rnn_model import GRUDecoder
+from rnn_model import GRUDecoder, LMUDecoder
 
 class BrainToTextDecoder_Trainer:
     """
@@ -117,17 +117,36 @@ class BrainToTextDecoder_Trainer:
             torch.manual_seed(self.args['seed'])
 
         # Initialize the model 
-        self.model = GRUDecoder(
-            neural_dim = self.args['model']['n_input_features'],
-            n_units = self.args['model']['n_units'],
-            n_days = len(self.args['dataset']['sessions']),
-            n_classes  = self.args['dataset']['n_classes'],
-            rnn_dropout = self.args['model']['rnn_dropout'], 
-            input_dropout = self.args['model']['input_network']['input_layer_dropout'], 
-            n_layers = self.args['model']['n_layers'],
-            patch_size = self.args['model']['patch_size'],
-            patch_stride = self.args['model']['patch_stride'],
-        )
+        if self.args["model_type"] == "LMU":
+            self.logger.info("Using the LMU model.")
+            self.model = LMUDecoder(
+                neural_dim = self.args['model']['n_input_features'],
+                n_units = self.args['model']['n_units'], 
+                n_days = len(self.args['dataset']['sessions']),
+                n_classes = self.args['dataset']['n_classes'],
+                rnn_dropout = self.args['model']['rnn_dropout'],
+                input_dropout = self.args['model']['input_network']['input_layer_dropout'],
+                n_layers = self.args['model']['n_layers'],
+                patch_size = self.args['model']['patch_size'],
+                patch_stride = self.args['model']['patch_stride'],
+                memory_size = self.args['model']['memory_size'],    # memory vector dimension in LMU
+                theta = self.args['model']['theta'],                # sliding window for LMU
+                learn_a = False,
+                learn_b = False
+            )
+        else:
+            self.logger.info("Using the GRU model.")
+            self.model = GRUDecoder(
+                neural_dim = self.args['model']['n_input_features'],
+                n_units = self.args['model']['n_units'],
+                n_days = len(self.args['dataset']['sessions']),
+                n_classes  = self.args['dataset']['n_classes'],
+                rnn_dropout = self.args['model']['rnn_dropout'], 
+                input_dropout = self.args['model']['input_network']['input_layer_dropout'], 
+                n_layers = self.args['model']['n_layers'],
+                patch_size = self.args['model']['patch_size'],
+                patch_stride = self.args['model']['patch_stride'],
+            )
 
         # Call torch.compile to speed up training
         self.logger.info("Using torch.compile")
@@ -437,11 +456,15 @@ class BrainToTextDecoder_Trainer:
         '''
         Apply various augmentations and smoothing to data
         Performing augmentations is much faster on GPU than CPU
+
+        NOTE: n_time_steps = Number of time steps per trial.
         '''
 
         data_shape = features.shape
         batch_size = data_shape[0]
         channels = data_shape[-1]
+
+        assert len(data_shape) == 3
 
         # We only apply these augmentations in training
         if mode == 'train':
@@ -469,6 +492,74 @@ class BrainToTextDecoder_Trainer:
                 cut = np.random.randint(0, self.transform_args['random_cut'])
                 features = features[:, cut:, :]
                 n_time_steps = n_time_steps - cut
+
+            # random contiguous time masking (variable-length aware)
+            if self.transform_args['time_masking'] > 0:
+                mask_ratio = self.transform_args['time_masking']
+                assert 0 < mask_ratio < 1
+                self.logger.info(f"APPLYING TIME MASKING with mask_ratio={mask_ratio}")
+
+                # n_time_steps must be a 1D tensor of true lengths
+                assert n_time_steps.ndim == 1 and n_time_steps.shape[0] == batch_size
+
+                seq_lens = n_time_steps.to(self.device)                   # (B,)
+                max_len  = features.shape[1]
+                B        = batch_size
+
+                # 1) Total mask count per sample
+                total_masked = (seq_lens * mask_ratio).long().clamp(min=1)
+
+                # 2) Random chunk counts (3–5 per sample)
+                chunks_per_sample = torch.randint(3, 6, (B,), device=self.device)  # (B,)
+                K = chunks_per_sample.max().item()  # max chunks across batch
+
+                # 3) Chunk lengths per sample
+                chunk_len = (total_masked // chunks_per_sample).clamp(min=1)       # (B,)
+
+                # 4) Compute possible start ranges
+                # start must satisfy: start ∈ [0, seq_len - chunk_len]
+                max_start = (seq_lens - chunk_len).clamp(min=0)                    # (B,)
+
+                # 5) Generate random start positions for each potential chunk (B,K)
+                rand_u   = torch.rand(B, K, device=self.device)
+                starts   = (rand_u * (max_start.unsqueeze(1) + 1)).long()          # (B,K)
+
+                # 6) Compute chunk end indices
+                ends = (starts + chunk_len.unsqueeze(1))                           # (B,K)
+
+                # 7) Create time index grid
+                t = torch.arange(max_len, device=self.device).view(1, 1, max_len)  # (1,1,T)
+
+                # 8) Expand starts & ends for broadcasting: (B,K,T)
+                starts_exp = starts.unsqueeze(2)
+                ends_exp   = ends.unsqueeze(2)
+
+                # 9) Mask for each chunk: start <= t < end   → shape (B, K, T)
+                chunk_masks = (t >= starts_exp) & (t < ends_exp)
+
+                # 10) Reduce across chunks: OR along K dimension → (B,T)
+                mask = torch.any(chunk_masks, dim=1)
+
+                # 11) Do not mask beyond true seq lengths
+                valid = t < seq_lens.view(B, 1, 1)     # (B,1,T)
+                valid = valid.squeeze(1)               # (B,T)
+                mask &= valid
+
+                # 12) Apply mask
+                features[mask] = 0.0
+            else:
+                self.logger.info("NO TIME MASKING.")
+
+
+            # feature masking
+            assert channels == 512
+            if self.transform_args['feature_masking'] > 0:
+                n_mask_features = self.transform_args['feature_masking']
+                assert n_mask_features < channels and n_mask_features > 0 and type(n_mask_features) == int, f"Invalid n_mask_features={n_mask_features} provided."
+
+                for b in range(batch_size):
+                    mask_idx = torch.randperm(channels, device=self.device)[:n_mask_features]
+                    features[b, :, mask_idx] = 0.0
 
         # Apply Gaussian smoothing to data 
         # This is done in both training and validation
