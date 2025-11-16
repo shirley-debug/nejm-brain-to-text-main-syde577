@@ -75,7 +75,7 @@ def analyze_predictions(predictions_csv):
     print(f"Average Validation Loss: {avg_loss:.4f}")
 
 if args.phoneme_predictions_csv is not None:
-    predictions_path = args.predictions_path
+    predictions_path = args.phoneme_predictions_csv
     df = pd.read_csv(predictions_path)
     df.head()
 
