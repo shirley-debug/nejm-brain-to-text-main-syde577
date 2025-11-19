@@ -9,93 +9,6 @@ from torch.nn import functional as F
 from scipy.signal import cont2discrete
 
 
-class LayerNormGRUCell(nn.Module):
-    def __init__(self, input_size, hidden_size):
-        super().__init__()
-
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-
-        # Input weights (W_x)
-        self.W_x = nn.Linear(input_size, 3 * hidden_size, bias=False)
-        # Hidden weights (W_h)
-        self.W_h = nn.Linear(hidden_size, 3 * hidden_size, bias=False)
-        self.bias = nn.Parameter(torch.zeros(3 * hidden_size))
-
-        # LayerNorm for each gate projection
-        self.ln = nn.LayerNorm(3 * hidden_size)
-
-    def forward(self, x, h_prev):
-        gates = self.W_x(x) + self.W_h(h_prev) + self.bias  
-        
-        # LN before splitting gates
-        gates = self.ln(gates)
-
-        # Split into update (z), reset (r), new (n)
-        z, r, n = gates.chunk(3, dim=-1)
-
-        z = torch.sigmoid(z)
-        r = torch.sigmoid(r)
-        n = torch.tanh(n + r * (self.W_h(h_prev)))
-
-        # GRU update rule
-        h = (1 - z) * n + z * h_prev
-        return h
-    
-
-class LayerNormGRU(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers,
-                 dropout=0.0, batch_first=True):
-        super().__init__()
-
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.batch_first = batch_first
-        self.dropout = dropout
-
-        self.layers = nn.ModuleList()
-        for i in range(num_layers):
-            layer_input_size = input_size if i == 0 else hidden_size
-            self.layers.append(LayerNormGRUCell(layer_input_size, hidden_size))
-
-        self.dropout_layer = nn.Dropout(dropout)
-
-    def forward(self, x, h0=None):
-        if self.batch_first:
-            batch, time, _ = x.shape
-        else:
-            time, batch, _ = x.shape
-            x = x.transpose(0, 1)
-
-        if h0 is None:
-            h0 = torch.zeros(self.num_layers, batch, self.hidden_size, device=x.device)
-
-        h_next = []
-        output = x
-
-        # Process each layer
-        for layer_idx, cell in enumerate(self.layers):
-            h_t = h0[layer_idx]
-            out_layer = []
-
-            for t in range(time):
-                h_t = cell(output[:, t], h_t)
-                out_layer.append(h_t)
-
-            out_layer = torch.stack(out_layer, dim=1)
-
-            # dropout between layers, except last layer
-            if layer_idx < self.num_layers - 1:
-                out_layer = self.dropout_layer(out_layer)
-
-            output = out_layer
-            h_next.append(h_t)
-
-        h_next = torch.stack(h_next, dim=0)
-
-        return output, h_next
-
-
 class GRUDecoder(nn.Module):
     '''
     Defines the GRU decoder
@@ -113,7 +26,6 @@ class GRUDecoder(nn.Module):
                  patch_size = 0,
                  patch_stride = 0,
                  layer_norm=False,
-                 layer_norm_each=False,
                  ):
         '''
         neural_dim  (int)      - number of channels in a single timestep (e.g. 512)
@@ -126,7 +38,6 @@ class GRUDecoder(nn.Module):
         patch_size  (int)      - the number of timesteps to concat on initial input layer - a value of 0 will disable this "input concat" step 
         patch_stride(int)      - the number of timesteps to stride over when concatenating initial input 
         layer_norm (bool)      - apply layer normalization
-        layer_norm_each (bool) - apply layer norm after each GRU layer using custom LayerNormGRUCell
         '''
         super(GRUDecoder, self).__init__()
         
@@ -143,7 +54,6 @@ class GRUDecoder(nn.Module):
         self.patch_stride = patch_stride
 
         self.layer_norm = layer_norm
-        self.layer_norm_each = layer_norm_each
 
         # Parameters for the day-specific input layers
         self.day_layer_activation = nn.Softsign() # basically a shallower tanh 
@@ -164,23 +74,14 @@ class GRUDecoder(nn.Module):
         if self.patch_size > 0:
             self.input_size *= self.patch_size
 
-        if self.layer_norm_each:
-            self.gru = LayerNormGRU(
-                input_size=self.input_size,
-                hidden_size=self.n_units,
-                num_layers=self.n_layers,
-                dropout=self.rnn_dropout,
-                batch_first=True
-            )   
-        else:
-            self.gru = nn.GRU(
-                input_size = self.input_size,
-                hidden_size = self.n_units,
-                num_layers = self.n_layers,
-                dropout = self.rnn_dropout, 
-                batch_first = True, # The first dim of our input is the batch dim
-                bidirectional = False,
-            )
+        self.gru = nn.GRU(
+            input_size = self.input_size,
+            hidden_size = self.n_units,
+            num_layers = self.n_layers,
+            dropout = self.rnn_dropout, 
+            batch_first = True, # The first dim of our input is the batch dim
+            bidirectional = False,
+        )
 
         if self.layer_norm:
             self.ln = nn.LayerNorm(self.n_units)

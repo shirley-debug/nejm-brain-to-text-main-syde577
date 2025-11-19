@@ -148,7 +148,6 @@ class BrainToTextDecoder_Trainer:
                 patch_size = self.args['model']['patch_size'],
                 patch_stride = self.args['model']['patch_stride'],
                 layer_norm = self.args['model']['layer_norm'],
-                layer_norm_each = self.args['model']['layer_norm_each']
             )
 
         # Call torch.compile to speed up training
