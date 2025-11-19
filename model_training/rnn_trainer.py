@@ -311,13 +311,14 @@ class BrainToTextDecoder_Trainer:
                 fused = True
             )
         elif optimizer == "RMSProp":
+            rmsprop_config = self.args['rmsprop']
             optim = torch.optim.RMSprop(
                 param_groups,
                 lr = self.args['lr_max'],
-                alpha = self.args.get('alpha', 0.99),
-                eps = self.args['epsilon'],
-                weight_decay = self.args['weight_decay'],
-                momentum = self.args.get('momentum', 0)
+                alpha = rmsprop_config.get('alpha', 0.99),
+                eps = rmsprop_config.get('epsilon', 0.00000001),
+                weight_decay = rmsprop_config.get('weight_decay', 0),
+                momentum = rmsprop_config.get('momentum', 0)
             )
 
         return optim 
