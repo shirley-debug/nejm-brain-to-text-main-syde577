@@ -24,6 +24,7 @@ class GRUDecoder(nn.Module):
                  n_layers = 5, 
                  patch_size = 0,
                  patch_stride = 0,
+                 layer_norm=False,
                  ):
         '''
         neural_dim  (int)      - number of channels in a single timestep (e.g. 512)
@@ -35,6 +36,7 @@ class GRUDecoder(nn.Module):
         n_layers    (int)      - number of recurrent layers 
         patch_size  (int)      - the number of timesteps to concat on initial input layer - a value of 0 will disable this "input concat" step 
         patch_stride(int)      - the number of timesteps to stride over when concatenating initial input 
+        layer_norm (bool)      - apply layer normalization
         '''
         super(GRUDecoder, self).__init__()
         
@@ -49,6 +51,8 @@ class GRUDecoder(nn.Module):
         
         self.patch_size = patch_size
         self.patch_stride = patch_stride
+
+        self.layer_norm = layer_norm
 
         # Parameters for the day-specific input layers
         self.day_layer_activation = nn.Softsign() # basically a shallower tanh 
@@ -77,6 +81,8 @@ class GRUDecoder(nn.Module):
             batch_first = True, # The first dim of our input is the batch dim
             bidirectional = False,
         )
+
+        self.ln = nn.LayerNorm(self.n_units)
 
         # Set recurrent units to have orthogonal param init and input layers to have xavier init
         # NOTE: Initializes the recurrent hidden-to-hidden weights (weight_hh) orthogonally (good for recurrent stability)
@@ -136,6 +142,9 @@ class GRUDecoder(nn.Module):
 
         # Pass input through RNN 
         output, hidden_states = self.gru(x, states)
+
+        if self.layer_norm: 
+            output = self.ln(output)   # <-- normalize GRU outputs
 
         # Compute logits
         logits = self.out(output)
