@@ -300,15 +300,25 @@ class BrainToTextDecoder_Trainer:
                     {'params' : bias_params, 'weight_decay' : 0, 'group_type' : 'bias'},
                     {'params' : other_params, 'group_type' : 'other'}
                 ]
-            
-        optim = torch.optim.AdamW(
-            param_groups,
-            lr = self.args['lr_max'],
-            betas = (self.args['beta0'], self.args['beta1']),
-            eps = self.args['epsilon'],
-            weight_decay = self.args['weight_decay'],
-            fused = True
-        )
+        
+        if optimizer == "AdamW":
+            optim = torch.optim.AdamW(
+                param_groups,
+                lr = self.args['lr_max'],
+                betas = (self.args['beta0'], self.args['beta1']),
+                eps = self.args['epsilon'],
+                weight_decay = self.args['weight_decay'],
+                fused = True
+            )
+        elif optimizer == "RMSProp":
+            optim = torch.optim.RMSprop(
+                param_groups,
+                lr = self.args['lr_max'],
+                alpha = self.args.get('alpha', 0.99),
+                eps = self.args['epsilon'],
+                weight_decay = self.args['weight_decay'],
+                momentum = self.args.get('momentum', 0)
+            )
 
         return optim 
 
