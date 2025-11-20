@@ -1,4 +1,3 @@
-%%writefile /kaggle/working/nejm-brain-to-text/model_training/train_adam_baseline_10_runs.py
 """
 Train Adam baseline model 10 times to measure variance.
 Each run gets a unique checkpoint directory and saves metrics separately.
