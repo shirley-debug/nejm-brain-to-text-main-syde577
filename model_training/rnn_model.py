@@ -1,6 +1,14 @@
 import torch 
 from torch import nn
 
+import numpy as np
+from torch import fft
+from torch.nn import init
+from torch.nn import functional as F
+
+from scipy.signal import cont2discrete
+
+
 class GRUDecoder(nn.Module):
     '''
     Defines the GRU decoder
@@ -17,6 +25,7 @@ class GRUDecoder(nn.Module):
                  n_layers = 5, 
                  patch_size = 0,
                  patch_stride = 0,
+                 layer_norm=False,
                  ):
         '''
         neural_dim  (int)      - number of channels in a single timestep (e.g. 512)
@@ -28,6 +37,7 @@ class GRUDecoder(nn.Module):
         n_layers    (int)      - number of recurrent layers 
         patch_size  (int)      - the number of timesteps to concat on initial input layer - a value of 0 will disable this "input concat" step 
         patch_stride(int)      - the number of timesteps to stride over when concatenating initial input 
+        layer_norm (bool)      - apply layer normalization
         '''
         super(GRUDecoder, self).__init__()
         
@@ -42,6 +52,7 @@ class GRUDecoder(nn.Module):
         
         self.patch_size = patch_size
         self.patch_stride = patch_stride
+        self.layer_norm = layer_norm
 
         # Parameters for the day-specific input layers
         self.day_layer_activation = nn.Softsign() # basically a shallower tanh 
@@ -71,7 +82,12 @@ class GRUDecoder(nn.Module):
             bidirectional = False,
         )
 
+        if self.layer_norm:
+            self.ln = nn.LayerNorm(self.n_units)
+        
         # Set recurrent units to have orthogonal param init and input layers to have xavier init
+        # NOTE: Initializes the recurrent hidden-to-hidden weights (weight_hh) orthogonally (good for recurrent stability)
+        # NOTE: Initializes the input-to-hidden weights (weight_ih) with Xavier uniform initialization (good for balancing input/output variance)
         for name, param in self.gru.named_parameters():
             if "weight_hh" in name:
                 nn.init.orthogonal_(param)
@@ -120,11 +136,15 @@ class GRUDecoder(nn.Module):
         
         # Determine initial hidden states
         if states is None:
+            # Parameters are shared across all layers and all batch elements
             states = self.h0.expand(self.n_layers, x.shape[0], self.n_units).contiguous()
 
         # Pass input through RNN 
         output, hidden_states = self.gru(x, states)
 
+        if self.layer_norm: 
+            output = self.ln(output)
+        
         # Compute logits
         logits = self.out(output)
         
