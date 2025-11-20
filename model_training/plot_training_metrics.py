@@ -41,25 +41,34 @@ def plot_training_metrics(metrics, args, output_filename=None):
         train_batches = train_batches[::step]
         train_losses = train_losses[::step]
     
-    # Create figure with 2x2 subplots (4 plots total)
-    fig = plt.figure(figsize=(14, 10))
+    # Filter out data before batch 200 (omit first data point)
+    min_batch = 200
+    train_mask = train_batches >= min_batch
+    train_batches = train_batches[train_mask]
+    train_losses = train_losses[train_mask]
     
-    # 1. Train Loss vs Val Loss (overfitting detection)
-    ax1 = plt.subplot(2, 2, 1)
+    val_mask = val_batches >= min_batch
+    val_batches = val_batches[val_mask]
+    val_losses = val_losses[val_mask]
+    val_PERs = val_PERs[val_mask]
+    
+    # Create figure with 1x3 subplots (3 plots total)
+    fig = plt.figure(figsize=(18, 5))
+    
+    # 1. Train Loss vs Val Loss (overfitting detection) - same scale
+    ax1 = plt.subplot(1, 3, 1)
     ax1.plot(train_batches, train_losses, 'b-', label='Train Loss', alpha=0.7, linewidth=2)
-    ax1_twin = ax1.twinx()
-    ax1_twin.plot(val_batches, val_losses, 'r-', label='Val Loss', alpha=0.7, linewidth=2, marker='o', markersize=6)
+    ax1.plot(val_batches, val_losses, 'r-', label='Val Loss', alpha=0.7, linewidth=2, marker='o', markersize=6)
     ax1.set_xlabel('Training Batch', fontsize=11)
-    ax1.set_ylabel('Train Loss', fontsize=11, color='b')
-    ax1_twin.set_ylabel('Val Loss', fontsize=11, color='r')
+    ax1.set_ylabel('Loss', fontsize=11)
     ax1.set_title('Train Loss vs Val Loss', fontsize=12, fontweight='bold')
     ax1.grid(True, alpha=0.3)
-    ax1.legend(loc='upper left')
-    ax1_twin.legend(loc='upper right')
-    ax1.set_yscale('log')
+    ax1.legend(loc='best')
+    # Using linear scale instead of log to better assess actual variation
+    # (log scale can make normal variation look like oscillation)
     
     # 2. Validation PER over time (main metric) - NORMAL axis (decreasing = improving)
-    ax2 = plt.subplot(2, 2, 2)
+    ax2 = plt.subplot(1, 3, 2)
     ax2.plot(val_batches, val_PERs, 'g-', linewidth=2, marker='o', markersize=6)
     best_per = val_PERs.min()
     best_idx = np.argmin(val_PERs)
@@ -77,7 +86,7 @@ def plot_training_metrics(metrics, args, output_filename=None):
     val_losses_interp = np.interp(train_batches, val_batches, val_losses)
     train_val_ratio = train_losses / (val_losses_interp + 1e-8)
     
-    ax3 = plt.subplot(2, 2, 3)
+    ax3 = plt.subplot(1, 3, 3)
     ax3.plot(train_batches, train_val_ratio, 'orange', linewidth=2, alpha=0.7)
     ax3.axhline(y=1.0, color='r', linestyle='--', alpha=0.5, label='Ratio = 1.0')
     ax3.set_xlabel('Training Batch', fontsize=11)
@@ -87,75 +96,6 @@ def plot_training_metrics(metrics, args, output_filename=None):
     ax3.legend()
     if len(train_val_ratio) > 0:
         ax3.set_ylim([0, max(2, train_val_ratio.max() * 1.1)])
-    
-    # 4. Learning Rate Schedule
-    ax4 = plt.subplot(2, 2, 4)
-    lr_max = args['lr_max']
-    lr_min = args['lr_min']
-    lr_decay_steps = args['lr_decay_steps']
-    lr_warmup_steps = args.get('lr_warmup_steps', 0)
-    scheduler_type = args.get('lr_scheduler_type', 'cosine')
-    
-    def compute_lr(step, sched_type):
-        """Compute learning rate based on scheduler type."""
-        # Warmup phase (if warmup_steps > 0)
-        if lr_warmup_steps > 0 and step < lr_warmup_steps:
-            return lr_max * (step / lr_warmup_steps)
-        
-        # Decay phase (after warmup)
-        if step < lr_decay_steps:
-            progress = (step - lr_warmup_steps) / max(1, lr_decay_steps - lr_warmup_steps)
-            
-            if sched_type == 'cosine':
-                # Cosine decay: smooth curve from 1.0 to min_lr_ratio
-                cosine_decay = 0.5 * (1 + np.cos(np.pi * progress))
-                min_lr_ratio = lr_min / lr_max
-                return lr_min + (lr_max - lr_min) * cosine_decay
-            
-            elif sched_type == 'linear':
-                # Linear decay: straight line from lr_max to lr_min
-                return lr_max - (lr_max - lr_min) * progress
-            
-            elif sched_type == 'exponential':
-                # Exponential decay: exponential curve
-                decay_rate = lr_min / lr_max
-                return lr_max * (decay_rate ** progress)
-            
-            elif sched_type == 'step':
-                # Step decay: reduce by factor at milestones (simplified - assumes single step)
-                # For true step decay, you'd need milestone info from args
-                step_size = lr_decay_steps / 3  # Assume 3 steps
-                gamma = 0.5  # Reduce by half each step
-                steps = int(progress * 3)
-                return lr_max * (gamma ** steps)
-            
-            else:
-                # Unknown scheduler - assume constant after warmup
-                return lr_max
-        else:
-            # After decay_steps, maintain minimum
-            return lr_min
-    
-    max_batch = max(train_batches.max() if len(train_batches) > 0 else 10000, 
-                    val_batches.max() if len(val_batches) > 0 else 10000)
-    all_batches = np.arange(0, max_batch + 1, 100)
-    lrs = [compute_lr(b, scheduler_type) for b in all_batches]
-    ax4.plot(all_batches, lrs, 'b-', linewidth=2, alpha=0.7)
-    ax4.set_xlabel('Training Batch', fontsize=11)
-    ax4.set_ylabel('Learning Rate', fontsize=11)
-    
-    # Update title based on scheduler type
-    scheduler_names = {
-        'cosine': 'Cosine Decay',
-        'linear': 'Linear Decay',
-        'exponential': 'Exponential Decay',
-        'step': 'Step Decay',
-        'constant': 'Constant (No Decay)'
-    }
-    title = f"Learning Rate Schedule ({scheduler_names.get(scheduler_type, scheduler_type.title())})"
-    ax4.set_title(title, fontsize=12, fontweight='bold')
-    ax4.grid(True, alpha=0.3)
-    ax4.set_yscale('log')
     
     plt.tight_layout()
     
@@ -209,6 +149,10 @@ if __name__ == "__main__":
     
     plot_training_metrics(metrics, args, output_filename=args_cmd.modelname)
     print("\nPlots generated successfully!")
+#rmb to save the model pkl file when you run the training script
+# metrics = trainer.train()
+# with open(metrics_file, 'wb') as f:
+#     pickle.dump(metrics, f)
 #example of how you use it
 # !cd /kaggle/working/nejm-brain-to-text/model_training/ && \
 # python plot_training_metrics.py --metrics_file trained_models/minimal_baseline/training_metrics.pkl --modelname baseline_adamW
