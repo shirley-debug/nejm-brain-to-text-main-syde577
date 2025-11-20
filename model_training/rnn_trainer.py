@@ -22,7 +22,7 @@ torch.set_float32_matmul_precision('high') # makes float32 matmuls faster on som
 torch.backends.cudnn.deterministic = True # makes training more reproducible
 torch._dynamo.config.cache_size_limit = 64
 
-from rnn_model import GRUDecoder
+import rnn_model
 
 class BrainToTextDecoder_Trainer:
     """
@@ -115,19 +115,43 @@ class BrainToTextDecoder_Trainer:
             np.random.seed(self.args['seed'])
             random.seed(self.args['seed'])
             torch.manual_seed(self.args['seed'])
+        
+        # Initialize the model
+        model_params = {
+            'neural_dim': self.args['model']['n_input_features'],
+            'n_units': self.args['model']['n_units'],
+            'n_days': len(self.args['dataset']['sessions']),
+            'n_classes': self.args['dataset']['n_classes'],
+            'rnn_dropout': self.args['model']['rnn_dropout'],
+            'input_dropout': self.args['model']['input_network']['input_layer_dropout'],
+            'n_layers': self.args['model']['n_layers'],
+            'patch_size': self.args['model']['patch_size'],
+            'patch_stride': self.args['model']['patch_stride'],
+            # For GRUDecoderWithAdditionalNorm
+            'post_rnn_layers': self.args['model'].get('post_rnn_layers'),
+            'post_rnn_dim': self.args['model'].get('post_rnn_dim', None),
+            'post_rnn_dropout': self.args['model'].get('post_rnn_dropout'),
+            'post_rnn_activation': self.args['model'].get('post_rnn_activation', 'relu'),
+        }
 
-        # Initialize the model 
-        self.model = GRUDecoder(
-            neural_dim = self.args['model']['n_input_features'],
-            n_units = self.args['model']['n_units'],
-            n_days = len(self.args['dataset']['sessions']),
-            n_classes  = self.args['dataset']['n_classes'],
-            rnn_dropout = self.args['model']['rnn_dropout'], 
-            input_dropout = self.args['model']['input_network']['input_layer_dropout'], 
-            n_layers = self.args['model']['n_layers'],
-            patch_size = self.args['model']['patch_size'],
-            patch_stride = self.args['model']['patch_stride'],
-        )
+        # Determine architecture, defaulting to "GRUDecoder" if not provided
+        architecture = None
+        if isinstance(self.args.get('model'), dict):
+            architecture = self.args['model'].get('architecture')
+        if not architecture:
+            architecture = "GRUDecoder"
+            self.logger.info(f"No model architecture specified. Defaulting to '{architecture}'")
+        else:
+            self.logger.info(f"Using model architecture: {architecture}")
+
+        # Instantiate model class
+        model_class = getattr(rnn_model, architecture)
+        # Filter params based on what the model accepts
+        import inspect
+        sig = inspect.signature(model_class.__init__)
+        valid_params = {k: v for k, v in model_params.items() if k in sig.parameters}
+        self.model = model_class(**valid_params)
+
 
         # Call torch.compile to speed up training
         self.logger.info("Using torch.compile")
