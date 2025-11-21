@@ -127,6 +127,7 @@ model = GRUDecoder(
     n_layers = model_args['model']['n_layers'],
     patch_size = model_args['model']['patch_size'],
     patch_stride = model_args['model']['patch_stride'],
+    layer_norm = model_args['model']['layer_norm'],
 )
 
 # load model weights
