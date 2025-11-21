@@ -316,6 +316,8 @@ class BrainToTextDecoder_Trainer:
                 weight_decay = self.args['weight_decay'],
             )
 
+        self.logger.info(f"Created {optimizer_type} optimizer")
+        
         return optim 
 
     def create_cosine_lr_scheduler(self, optim):
