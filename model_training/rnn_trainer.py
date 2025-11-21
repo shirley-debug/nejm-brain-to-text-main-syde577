@@ -135,14 +135,8 @@ class BrainToTextDecoder_Trainer:
         }
 
         # Determine architecture, defaulting to "GRUDecoder" if not provided
-        architecture = None
-        if isinstance(self.args.get('model'), dict):
-            architecture = self.args['model'].get('architecture')
-        if not architecture:
-            architecture = "GRUDecoder"
-            self.logger.info(f"No model architecture specified. Defaulting to '{architecture}'")
-        else:
-            self.logger.info(f"Using model architecture: {architecture}")
+        architecture = self.args['model'].get('architecture', 'GRUDecoder')
+        self.logger.info(f"Using model architecture: {architecture}")
 
         # Instantiate model class
         model_class = getattr(rnn_model, architecture)
