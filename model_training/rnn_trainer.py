@@ -242,7 +242,7 @@ class BrainToTextDecoder_Trainer:
         self.logger.info("Successfully initialized datasets")
 
         # Create optimizer, learning rate scheduler, and loss
-        self.optimizer = self.create_optimizer()
+        self.optimizer = self.create_optimizer(optimizer_type=self.args['optimizer_type'])
 
         if self.args['lr_scheduler_type'] == 'linear':
             self.learning_rate_scheduler = torch.optim.lr_scheduler.LinearLR(
@@ -274,7 +274,7 @@ class BrainToTextDecoder_Trainer:
         # Send model to device 
         self.model.to(self.device)
 
-    def create_optimizer(self):
+    def create_optimizer(self, optimizer_type='adamw'):
         '''
         Create the optimizer with special param groups 
 
@@ -297,15 +297,23 @@ class BrainToTextDecoder_Trainer:
                     {'params' : bias_params, 'weight_decay' : 0, 'group_type' : 'bias'},
                     {'params' : other_params, 'group_type' : 'other'}
                 ]
-            
-        optim = torch.optim.AdamW(
-            param_groups,
-            lr = self.args['lr_max'],
-            betas = (self.args['beta0'], self.args['beta1']),
-            eps = self.args['epsilon'],
-            weight_decay = self.args['weight_decay'],
-            fused = True
-        )
+        if optimizer_type == 'adamw':  
+            optim = torch.optim.AdamW(
+                param_groups,
+                lr = self.args['lr_max'],
+                betas = (self.args['beta0'], self.args['beta1']),
+                eps = self.args['epsilon'],
+                weight_decay = self.args['weight_decay'],
+                fused = True
+            )
+        elif optimizer_type == 'novograd':
+            optim = torch.optim.NovoGrad(
+                param_groups,
+                lr = self.args['lr_max'],
+                betas = (self.args['beta0'], self.args['beta1']),
+                eps = self.args['epsilon'],
+                weight_decay = self.args['weight_decay'],
+            )
 
         return optim 
 
