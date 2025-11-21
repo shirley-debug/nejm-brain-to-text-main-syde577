@@ -461,6 +461,8 @@ class BrainToTextDecoder_Trainer:
         '''
         Apply various augmentations and smoothing to data
         Performing augmentations is much faster on GPU than CPU
+        
+        NOTE: n_time_steps = Number of time steps per trial.
         '''
 
         data_shape = features.shape
@@ -496,8 +498,27 @@ class BrainToTextDecoder_Trainer:
                 features = features[:, cut:, :]
                 n_time_steps = n_time_steps - cut
 
+        # Apply Gaussian smoothing to data 
+        # This is done in both training and validation
+        if self.transform_args['smooth_data']:
+            features = gauss_smooth(
+                inputs = features, 
+                device = self.device,
+                smooth_kernel_std = self.transform_args['smooth_kernel_std'],
+                smooth_kernel_size= self.transform_args['smooth_kernel_size'],
+                )
+        
+        if mode == 'train':
+            # Some other ideas to try:
+            # warm up without masking
+            # increase mask ratio as time goes on: mask_width = int(base_width + epoch * growth_rate)
+
             # random contiguous time masking (accounts for varying length of each sequence)
             if self.transform_args['time_masking'] > 0:
+                # Apply augmentation only with 50% probability
+                if torch.rand(1).item() < 0.5:
+                    return features, n_time_steps
+
                 mask_ratio = self.transform_args['time_masking']
                 assert 0 < mask_ratio < 1
 
@@ -509,12 +530,17 @@ class BrainToTextDecoder_Trainer:
 
                 total_masked = (seq_lens * mask_ratio).long().clamp(min=1)
 
-                # 3–5 chunks per sample can be masked out
-                chunks_per_sample = torch.randint(3, 6, (batch_size,), device=self.device)  # (B,)
+                # 1–2 small chunks per sample can be masked out
+                chunks_per_sample = torch.randint(1, 3, (batch_size,), device=self.device)  # (B,)
                 # To ensure efficient vector operations, calculate K chunks for each sample
                 # but each sample may not have exactly chunks_per_sample (could have more or less)
                 K = chunks_per_sample.max().item()  # max chunks across batch
                 chunk_len = (total_masked // chunks_per_sample).clamp(min=1)       # (B,)
+
+                # cap chunk length so we don’t ruin the sequence
+                # // 10 --> If a single chunk hides 30–50% of a sequence, it becomes destructive.
+                # Capping it at 10% is a good compromise
+                chunk_len = torch.minimum(chunk_len, (seq_lens // 10).clamp(min=1))
 
                 # Chunk's start position  must satisfy [0, seq_len - chunk_len]
                 max_start = (seq_lens - chunk_len).clamp(min=0)                    # (B,)
@@ -538,7 +564,15 @@ class BrainToTextDecoder_Trainer:
                 valid = t < seq_lens.view(batch_size, 1, 1)     # (B,1,T)
                 valid = valid.squeeze(1)                        # (B,T)
                 mask &= valid
-                features[mask] = 0.0
+
+                # Replace masked regions with Gaussian noise around local mean
+                # compute per-sample feature mean and std
+                mean = features.mean(dim=1, keepdim=True)             # (B,1,F)
+                std = features.std(dim=1, keepdim=True) + 1e-5
+
+                noise = mean + 0.2 * std * torch.randn_like(features)
+
+                features[mask] = noise[mask]
 
 
             # random contiguous feature (channel) masking 
@@ -574,17 +608,6 @@ class BrainToTextDecoder_Trainer:
                 feature_mask = feature_mask.unsqueeze(1).expand(batch_size, features.shape[1], channels)
 
                 features[feature_mask] = 0.0
-
-        # Apply Gaussian smoothing to data 
-        # This is done in both training and validation
-        if self.transform_args['smooth_data']:
-            features = gauss_smooth(
-                inputs = features, 
-                device = self.device,
-                smooth_kernel_std = self.transform_args['smooth_kernel_std'],
-                smooth_kernel_size= self.transform_args['smooth_kernel_size'],
-                )
-            
         
         return features, n_time_steps
 
