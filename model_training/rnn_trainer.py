@@ -1,3 +1,4 @@
+from novograd import NovoGrad
 import torch 
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import LambdaLR
@@ -307,7 +308,7 @@ class BrainToTextDecoder_Trainer:
                 fused = True
             )
         elif optimizer_type == 'novograd':
-            optim = torch.optim.NovoGrad(
+            optim = NovoGrad(
                 param_groups,
                 lr = self.args['lr_max'],
                 betas = (self.args['beta0'], self.args['beta1']),
