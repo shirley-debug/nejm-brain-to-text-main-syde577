@@ -13,10 +13,10 @@ import pandas as pd
 from omegaconf import OmegaConf
 import time
 from tqdm import tqdm
+import editdistance
 import argparse
-import pandas as pd
 
-from rnn_model import GRUDecoder
+import rnn_model
 from evaluate_model_helpers import *
 import torchaudio.functional as F # for edit distance
 
@@ -36,8 +36,6 @@ parser.add_argument('--gpu_number', type=int, default=1,
 parser.add_argument('--sessions', type=str, nargs='+', default=None,
                     help='Specify one or more sessions to evaluate (e.g., "t15.2023.08.18" "t15.2023.08.20"). '
                          'If not specified, all sessions in the model config will be evaluated.')
-parser.add_argument('--output_dir', type=str, default=None,
-                    help='Directory to output phoneme predictions to.')
 parser.add_argument('--phoneme_predictions_csv', type=str, default=None,
                     help='If provided, skip phoneme prediction and only run analyze_predictions.')
 args = parser.parse_args()
@@ -116,19 +114,37 @@ else:
     print('Using CPU for model inference.')
     device = torch.device('cpu')
 
-# define model
-model = GRUDecoder(
-    neural_dim = model_args['model']['n_input_features'],
-    n_units = model_args['model']['n_units'], 
-    n_days = len(model_args['dataset']['sessions']),
-    n_classes = model_args['dataset']['n_classes'],
-    rnn_dropout = model_args['model']['rnn_dropout'],
-    input_dropout = model_args['model']['input_network']['input_layer_dropout'],
-    n_layers = model_args['model']['n_layers'],
-    patch_size = model_args['model']['patch_size'],
-    patch_stride = model_args['model']['patch_stride'],
-    layer_norm = model_args['model']['layer_norm'],
-)
+# Define the model
+model_params = {
+    'neural_dim': model_args['model']['n_input_features'],
+    'n_units': model_args['model']['n_units'],
+    'n_days': len(model_args['dataset']['sessions']),
+    'n_classes': model_args['dataset']['n_classes'],
+    'rnn_dropout': model_args['model']['rnn_dropout'],
+    'input_dropout': model_args['model']['input_network']['input_layer_dropout'],
+    'n_layers': model_args['model']['n_layers'],
+    'patch_size': model_args['model']['patch_size'],
+    'patch_stride': model_args['model']['patch_stride'],
+    'post_rnn_layers': model_args['model'].get('post_rnn_layers', 0),
+    'post_rnn_dim': model_args['model'].get('post_rnn_dim', None),
+    'post_rnn_dropout': model_args['model'].get('post_rnn_dropout', 0.1),
+    'post_rnn_activation': model_args['model'].get('post_rnn_activation', 'relu'),
+    'layer_norm': model_args['model'].get('layer_norm', False),
+}
+
+# Determine architecture, defaulting to "GRUDecoder" if not provided
+architecture = None
+if isinstance(model_args.get('model'), dict):
+    architecture = model_args['model'].get('architecture')
+if not architecture:
+    architecture = "GRUDecoder"
+
+model_class = getattr(rnn_model, architecture)
+import inspect
+sig = inspect.signature(model_class.__init__)
+valid_params = {k: v for k, v in model_params.items() if k in sig.parameters}
+print(f"VALID PARAMS PASSED TO {model_class.__name__}: {valid_params}")
+model = model_class(**valid_params)
 
 # load model weights
 checkpoint = torch.load(os.path.join(model_path, 'best_checkpoint'), weights_only=False, map_location=device)
@@ -223,9 +239,9 @@ pbar.close()
 
 
 # convert logits to phoneme sequences and print them out
-output_dir = args.output_dir
-os.makedirs(output_dir, exist_ok=True)
-output_file = os.path.join(output_dir, f'phoneme_predictions_{time.strftime("%Y%m%d_%H%M%S")}.csv')
+# output_dir = "output"
+# os.makedirs(output_dir, exist_ok=True)
+output_file = os.path.join(model_path, f'phoneme_predictions_{time.strftime("%Y%m%d_%H%M%S")}.csv')
 
 df = pd.DataFrame(columns=[
     "session", 
@@ -258,14 +274,14 @@ for session, data in test_data.items():
         # print out the predicted sequences
         block_num = data['block_num'][trial]
         trial_num = data['trial_num'][trial]
-        print(f'Session: {session}, Block: {block_num}, Trial: {trial_num}')
+        # print(f'Session: {session}, Block: {block_num}, Trial: {trial_num}')
         if eval_type == 'val' or 'test':
             sentence_label = data['sentence_label'][trial]
             true_seq = data['seq_class_ids'][trial][0:data['seq_len'][trial]]
             true_seq = [LOGIT_TO_PHONEME[p] for p in true_seq]
 
-            print(f'Sentence label:      {sentence_label}')
-            print(f'True sequence:       {"-".join(true_seq)}')
+            # print(f'Sentence label:      {sentence_label}')
+            # print(f'True sequence:       {"-".join(true_seq)}')
 
             # Calculate relevant metrics per trial
             pred_phonemes = '-'.join(pred_seq)
@@ -291,8 +307,8 @@ for session, data in test_data.items():
             df = pd.concat([df, new_row], ignore_index=True)
 
             
-        print(f'Predicted Sequence:  {" ".join(pred_seq)}')
-        print()
+        # print(f'Predicted Sequence:  {" ".join(pred_seq)}')
+        # print()
 
 print(f"Average PER = {total_ed/total_length_denom}")
 df.to_csv(output_file, index=False)
