@@ -510,7 +510,7 @@ class BrainToTextDecoder_Trainer:
             # random contiguous time masking (accounts for varying length of each sequence)
             if self.transform_args['time_masking'] > 0:
                 # Apply augmentation only with 50% probability
-                if torch.rand(1).item() < 0.5:
+                if torch.rand(1).item() < self.transform_args.get('time_masking_prob', 0.5):
                     return features, n_time_steps
 
                 mask_ratio = self.transform_args['time_masking']
@@ -525,7 +525,11 @@ class BrainToTextDecoder_Trainer:
                 total_masked = (seq_lens * mask_ratio).long().clamp(min=1)
 
                 # 1–2 small chunks per sample can be masked out
-                chunks_per_sample = torch.randint(1, 3, (batch_size,), device=self.device)  # (B,)
+                chunks_per_sample = torch.randint(
+                    self.transform_args.get("min_chunks", 1),
+                    self.transform_args.get("max_chunks", 2) + 1,    # ensure max_chunks=2 default
+                    (batch_size,), device=self.device
+                )
                 # To ensure efficient vector operations, calculate K chunks for each sample
                 # but each sample may not have exactly chunks_per_sample (could have more or less)
                 K = chunks_per_sample.max().item()  # max chunks across batch
@@ -534,7 +538,11 @@ class BrainToTextDecoder_Trainer:
                 # cap chunk length so we don’t ruin the sequence
                 # // 10 --> If a single chunk hides 30–50% of a sequence, it becomes destructive.
                 # Capping it at 10% is a good compromise
-                chunk_len = torch.minimum(chunk_len, (seq_lens // 10).clamp(min=1))
+                mask_max_frac = 0.10
+                chunk_len = torch.minimum(
+                    chunk_len, 
+                    (seq_lens * mask_max_frac).long().clamp(min=1)
+                )
 
                 # Chunk's start position  must satisfy [0, seq_len - chunk_len]
                 max_start = (seq_lens - chunk_len).clamp(min=0)                    # (B,)
