@@ -455,11 +455,15 @@ class BrainToTextDecoder_Trainer:
         '''
         Apply various augmentations and smoothing to data
         Performing augmentations is much faster on GPU than CPU
+        
+        NOTE: n_time_steps = Number of time steps per trial.
         '''
 
         data_shape = features.shape
         batch_size = data_shape[0]
         channels = data_shape[-1]
+
+        assert len(data_shape) == 3
 
         # We only apply these augmentations in training
         if mode == 'train':
@@ -497,7 +501,107 @@ class BrainToTextDecoder_Trainer:
                 smooth_kernel_std = self.transform_args['smooth_kernel_std'],
                 smooth_kernel_size= self.transform_args['smooth_kernel_size'],
                 )
-            
+        
+        if mode == 'train':
+            # Some other ideas to try:
+            # warm up without masking
+            # increase mask ratio as time goes on: mask_width = int(base_width + epoch * growth_rate)
+
+            # random contiguous time masking (accounts for varying length of each sequence)
+            if self.transform_args['time_masking'] > 0:
+                # Apply augmentation only with 50% probability
+                if torch.rand(1).item() < 0.5:
+                    return features, n_time_steps
+
+                mask_ratio = self.transform_args['time_masking']
+                assert 0 < mask_ratio < 1
+
+                # n_time_steps must be a 1D tensor of true lengths
+                assert n_time_steps.ndim == 1 and n_time_steps.shape[0] == batch_size
+
+                seq_lens = n_time_steps.to(self.device)                            # (B,)
+                max_len  = features.shape[1]
+
+                total_masked = (seq_lens * mask_ratio).long().clamp(min=1)
+
+                # 1–2 small chunks per sample can be masked out
+                chunks_per_sample = torch.randint(1, 3, (batch_size,), device=self.device)  # (B,)
+                # To ensure efficient vector operations, calculate K chunks for each sample
+                # but each sample may not have exactly chunks_per_sample (could have more or less)
+                K = chunks_per_sample.max().item()  # max chunks across batch
+                chunk_len = (total_masked // chunks_per_sample).clamp(min=1)       # (B,)
+
+                # cap chunk length so we don’t ruin the sequence
+                # // 10 --> If a single chunk hides 30–50% of a sequence, it becomes destructive.
+                # Capping it at 10% is a good compromise
+                chunk_len = torch.minimum(chunk_len, (seq_lens // 10).clamp(min=1))
+
+                # Chunk's start position  must satisfy [0, seq_len - chunk_len]
+                max_start = (seq_lens - chunk_len).clamp(min=0)                    # (B,)
+                # Generate random start positions for each potential chunk (B,K)
+                rand_u = torch.rand(batch_size, K, device=self.device)
+                # +1 ensures we include the last possible start position
+                starts = (rand_u * (max_start.unsqueeze(1) + 1)).long()            # (B,K)
+                # Compute chunk end indices
+                ends = (starts + chunk_len.unsqueeze(1))                           # (B,K)
+
+                # Create time index grid
+                t = torch.arange(max_len, device=self.device).view(1, 1, max_len)  # (1,1,T)
+                # Expand starts & ends for broadcasting: (B,K,T)
+                starts_exp = starts.unsqueeze(2)
+                ends_exp   = ends.unsqueeze(2)
+                # Mask for each chunk: start <= t < end
+                chunk_masks = (t >= starts_exp) & (t < ends_exp) # (B, K, T)
+                mask = torch.any(chunk_masks, dim=1) # (B,T)
+
+                # Do not mask beyond true seq lengths
+                valid = t < seq_lens.view(batch_size, 1, 1)     # (B,1,T)
+                valid = valid.squeeze(1)                        # (B,T)
+                mask &= valid
+
+                # Replace masked regions with Gaussian noise around local mean
+                # compute per-sample feature mean and std
+                mean = features.mean(dim=1, keepdim=True)             # (B,1,F)
+                std = features.std(dim=1, keepdim=True) + 1e-5
+
+                noise = mean + 0.2 * std * torch.randn_like(features)
+
+                features[mask] = noise[mask]
+
+
+            # random contiguous feature (channel) masking 
+            # masks 3-5 contiguous chunks randomly (same as time masking since many channels = 512)
+            if self.transform_args['feature_masking'] > 0:
+                mask_ratio = self.transform_args['feature_masking']
+                assert 0 < mask_ratio < 1
+
+                # total channels to mask per sample
+                total_masked = int(channels * mask_ratio)
+                total_masked = max(total_masked, 1)
+
+                # 3–5 chunks per sample
+                chunks_per_sample = torch.randint(3, 6, (batch_size,), device=self.device)   # (B,)
+                K = chunks_per_sample.max().item()                             # max chunks
+                chunk_len = (total_masked // chunks_per_sample).clamp(min=1)   # (B,)
+
+                max_start = (channels - chunk_len).clamp(min=0)                # (B,)
+                # Chunk's start position  must satisfy [0, seq_len - chunk_len]
+                rand_u = torch.rand(batch_size, K, device=self.device)
+                starts = (rand_u * (max_start.unsqueeze(1) + 1)).long()        # (B,K)
+                # Compute chunk end positions
+                ends = starts + chunk_len.unsqueeze(1)                         # (B,K)
+
+                # Create channel index grid
+                ch = torch.arange(channels, device=self.device).view(1, 1, channels)   # (1,1,C)
+                # Expand start/end for broadcast (B,K,C)
+                starts_exp = starts.unsqueeze(2)
+                ends_exp   = ends.unsqueeze(2)
+                # Compute chunk masks
+                chunk_masks = (ch >= starts_exp) & (ch < ends_exp)             # (B,K,C)
+                feature_mask = torch.any(chunk_masks, dim=1)                   # (B,C)
+                feature_mask = feature_mask.unsqueeze(1).expand(batch_size, features.shape[1], channels)
+
+                features[feature_mask] = 0.0
         
         return features, n_time_steps
 
