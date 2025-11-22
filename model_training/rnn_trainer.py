@@ -132,6 +132,11 @@ class BrainToTextDecoder_Trainer:
             'post_rnn_dim': self.args['model'].get('post_rnn_dim', None),
             'post_rnn_dropout': self.args['model'].get('post_rnn_dropout'),
             'post_rnn_activation': self.args['model'].get('post_rnn_activation', 'relu'),
+            # For MambaDecoder
+            'd_state': self.args['model'].get('d_state'),
+            'd_conv': self.args['model'].get('d_conv'),
+            'expand': self.args['model'].get('expand'),
+            'bidirectional': self.args['model'].get('bidirectional'),
         }
 
         # Determine architecture, defaulting to "GRUDecoder" if not provided
