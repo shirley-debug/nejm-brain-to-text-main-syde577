@@ -158,9 +158,16 @@ class BrainToTextDecoder_Trainer:
         self.model = model_class(**valid_params)
 
 
-        # Call torch.compile to speed up training
-        self.logger.info("Using torch.compile")
-        self.model = torch.compile(self.model)
+        # Call torch.compile to speed up training (DISABLED to save memory)
+        # torch.compile uses extra memory for compilation - disable if OOM
+        # self.logger.info("Using torch.compile")
+        # self.model = torch.compile(self.model)
+        self.logger.info("torch.compile DISABLED to save GPU memory")
+        
+        # Clear GPU cache after model initialization
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            self.logger.info(f"GPU memory cleared. Free: {torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0):.2f} MB")
 
         self.logger.info(f"Initialized RNN decoding model")
 
@@ -585,6 +592,10 @@ class BrainToTextDecoder_Trainer:
 
             self.optimizer.step()
             self.learning_rate_scheduler.step()
+            
+            # Clear GPU cache periodically to prevent OOM
+            if i % 100 == 0 and torch.cuda.is_available():
+                torch.cuda.empty_cache()
             
             # Save training metrics 
             train_step_duration = time.time() - start_time
