@@ -243,7 +243,7 @@ class BrainToTextDecoder_Trainer:
         self.logger.info("Successfully initialized datasets")
 
         # Create optimizer, learning rate scheduler, and loss
-        self.optimizer = self.create_optimizer(optimizer_type=self.args['optimizer_type'])
+        self.optimizer = self.create_optimizer(optimizer_type=self.args.get('optimizer_type', "adamw"))
 
         if self.args['lr_scheduler_type'] == 'linear':
             self.learning_rate_scheduler = torch.optim.lr_scheduler.LinearLR(
