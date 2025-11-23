@@ -32,8 +32,8 @@ save_best_checkpoint: true
 save_all_val_steps: false
 save_final_model: false
 save_val_metrics: true
-early_stopping: false
-early_stopping_val_steps: 20
+early_stopping: true
+early_stopping_val_steps: 3
 
 num_training_batches: 10000
 lr_scheduler_type: cosine
@@ -47,8 +47,8 @@ lr_decay_steps_day: 10000
 lr_warmup_steps_day: 1000
 
 beta0: 0.9
-beta1: 0.999
-epsilon: 0.1
+beta1: 0.95
+epsilon: 1e-8
 weight_decay: 0.001
 weight_decay_day: 0
 seed: 10
