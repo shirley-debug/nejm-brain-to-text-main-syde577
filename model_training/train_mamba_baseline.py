@@ -3,6 +3,7 @@ Train Mamba baseline model once and evaluate on both validation and test sets.
 """
 
 import os
+import sys
 import shutil
 import numpy as np
 import torch
@@ -11,15 +12,31 @@ import pickle
 import subprocess
 from pathlib import Path
 
+# Add the model_training directory to the path to ensure imports work
+# regardless of where the script is run from
+script_dir = Path(__file__).parent.absolute()
+sys.path.insert(0, str(script_dir))
+
 import pandas as pd
 from omegaconf import OmegaConf
 from rnn_trainer import BrainToTextDecoder_Trainer
 
 os.environ['DATA_DIR'] = "/kaggle/input/brain-to-text-25-minimal/t15_copyTask_neuralData/hdf5_data_final"
 
-args_path = 'minimal_mamba_args.yaml'
+# Find the config file - it should be in the scripts directory
+repo_root = script_dir.parent
+args_path = repo_root / 'scripts' / 'minimal_mamba_args.yaml'
+if not args_path.exists():
+    # Fallback: try current directory
+    args_path = Path('minimal_mamba_args.yaml')
+    if not args_path.exists():
+        # Another fallback: try scripts directory relative to current working directory
+        args_path = Path('scripts') / 'minimal_mamba_args.yaml'
+    
 print(f"Loading configuration from: {args_path}")
-args = OmegaConf.load(args_path)
+if not args_path.exists():
+    raise FileNotFoundError(f"Config file not found: {args_path}")
+args = OmegaConf.load(str(args_path))
 
 def seed_everything(seed):
     """Set random seeds for reproducibility."""
@@ -29,7 +46,7 @@ def seed_everything(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-def evaluate_model(checkpoint_dir, model_name, eval_type):
+def evaluate_model(checkpoint_dir, model_name, eval_type, repo_root=None):
     """
     Run evaluate_sessions.py on the specified split (val or test) for this checkpoint directory.
     
@@ -37,14 +54,21 @@ def evaluate_model(checkpoint_dir, model_name, eval_type):
         checkpoint_dir: Path to the checkpoint directory
         model_name: Name of the model (for logging)
         eval_type: 'val' or 'test'
+        repo_root: Root directory of the repository (auto-detected if None)
     
     Returns:
         Dictionary with metrics or None if evaluation failed
     """
+    # Auto-detect repo root if not provided
+    if repo_root is None:
+        repo_root = Path(__file__).parent.parent.absolute()
+    else:
+        repo_root = Path(repo_root)
+    
     # Use minimal_evaluate.py (which is the actual evaluation script)
-    eval_script = "/kaggle/working/nejm-brain-to-text-main-syde577/scripts/minimal_evaluate.py"
-    data_dir = os.environ['DATA_DIR']
-    csv_path = "/kaggle/working/nejm-brain-to-text-main-syde577/data/t15_copyTaskData_description.csv"
+    eval_script = repo_root / 'scripts' / 'minimal_evaluate.py'
+    data_dir = os.environ.get('DATA_DIR', str(repo_root / 'data' / 'hdf5_data_final'))
+    csv_path = repo_root / 'data' / 't15_copyTaskData_description.csv'
     gpu_number = 0
     target_sessions = ["t15.2023.08.13", "t15.2023.08.18", "t15.2023.08.20"]
     
@@ -65,13 +89,13 @@ def evaluate_model(checkpoint_dir, model_name, eval_type):
 
     cmd = [
         "python",
-        eval_script,
+        str(eval_script),
         "--model_path",
         str(checkpoint_dir),
         "--data_dir",
-        data_dir,
+        str(data_dir),
         "--csv_path",
-        csv_path,
+        str(csv_path),
         "--eval_type",
         eval_type,
         "--gpu_number",
@@ -84,14 +108,14 @@ def evaluate_model(checkpoint_dir, model_name, eval_type):
     
     try:
         # Run from the scripts directory
-        work_dir = "/kaggle/working/nejm-brain-to-text-main-syde577/scripts/"
+        work_dir = str(repo_root / 'scripts')
         subprocess.run(cmd, check=True, cwd=work_dir, capture_output=True)
     except subprocess.CalledProcessError as e:
         print(f"[{model_name}] WARNING: {eval_type} evaluation failed with error: {e}")
         return None
 
     # The output CSV is saved in scripts/output directory (relative to where minimal_evaluate.py runs)
-    output_dir = Path("/kaggle/working/nejm-brain-to-text-main-syde577/scripts/output")
+    output_dir = repo_root / 'scripts' / 'output'
     
     # Get files sorted by modification time (newest last)
     try:
@@ -185,13 +209,14 @@ try:
     print(f"\n{'='*80}")
     print(f"Evaluating on VALIDATION set")
     print(f"{'='*80}\n")
-    val_metrics = evaluate_model(Path(args.checkpoint_dir), "MambaBaseline", 'val')
+    repo_root = Path(__file__).parent.parent.absolute()
+    val_metrics = evaluate_model(Path(args.checkpoint_dir), "MambaBaseline", 'val', repo_root=repo_root)
     
     # Evaluate on test
     print(f"\n{'='*80}")
     print(f"Evaluating on TEST set")
     print(f"{'='*80}\n")
-    test_metrics = evaluate_model(Path(args.checkpoint_dir), "MambaBaseline", 'test')
+    test_metrics = evaluate_model(Path(args.checkpoint_dir), "MambaBaseline", 'test', repo_root=repo_root)
     
     # Print summary
     print(f"\n{'='*80}")
