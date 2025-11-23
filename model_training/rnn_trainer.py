@@ -576,11 +576,11 @@ class BrainToTextDecoder_Trainer:
             loss.backward()
 
             # Clip gradient
+            grad_norm = 0.0
             if self.args['grad_norm_clip_value'] > 0: 
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 
                                                max_norm = self.args['grad_norm_clip_value'],
-                                               error_if_nonfinite = True,
-                                               foreach = True
+                                               error_if_nonfinite = False
                                                )
 
             self.optimizer.step()
