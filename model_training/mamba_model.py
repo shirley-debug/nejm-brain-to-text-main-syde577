@@ -113,9 +113,10 @@ class MambaDecoder(nn.Module):
                     expand=expand,
                 )
                 # Combine into a module that processes both directions
+                # Use 'forward_mamba' and 'backward_mamba' to avoid conflict with 'forward' method
                 self.mamba_layers.append(nn.ModuleDict({
-                    'forward': forward_mamba,
-                    'backward': backward_mamba,
+                    'forward_mamba': forward_mamba,
+                    'backward_mamba': backward_mamba,
                 }))
             else:
                 # Unidirectional Mamba
@@ -180,13 +181,13 @@ class MambaDecoder(nn.Module):
             # Process forward direction
             x_forward = x
             for i, mamba_dict in enumerate(self.mamba_layers):
-                x_forward = mamba_dict['forward'](x_forward)
+                x_forward = mamba_dict['forward_mamba'](x_forward)
                 x_forward = self.dropout_layers[i](x_forward)
             
             # Process backward direction (reverse sequence)
             x_backward = torch.flip(x, dims=[1])  # Reverse along time dimension
             for i, mamba_dict in enumerate(self.mamba_layers):
-                x_backward = mamba_dict['backward'](x_backward)
+                x_backward = mamba_dict['backward_mamba'](x_backward)
                 x_backward = self.dropout_layers[i](x_backward)
             x_backward = torch.flip(x_backward, dims=[1])  # Reverse back to original order
             
