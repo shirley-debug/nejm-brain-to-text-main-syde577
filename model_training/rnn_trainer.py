@@ -1,4 +1,3 @@
-import torch_optimizer
 import torch 
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import LambdaLR
@@ -306,14 +305,6 @@ class BrainToTextDecoder_Trainer:
                 eps = self.args['epsilon'],
                 weight_decay = self.args['weight_decay'],
                 fused = True
-            )
-        elif optimizer_type == 'novograd':
-            optim = torch_optimizer.NovoGrad(
-                param_groups,
-                lr = self.args['lr_max'],
-                betas = (self.args['beta0'], self.args['beta1']),
-                eps = self.args['epsilon'],
-                weight_decay = self.args['weight_decay'],
             )
 
         self.logger.info(f"Created {optimizer_type} optimizer")
