@@ -60,6 +60,13 @@ class MambaDecoder(nn.Module):
         self.n_days = n_days
         self.bidirectional = bidirectional
 
+        if self.bidirectional:
+            self.inter_projections = nn.ModuleList()
+            for i in range(self.n_layers - 1):  # Don't need projection after last layer
+                proj = nn.Linear(2 * self.n_units, self.n_units)
+                nn.init.xavier_uniform_(proj.weight)
+                self.inter_projections.append(proj)
+
         self.rnn_dropout = rnn_dropout
         self.input_dropout = input_dropout
         
@@ -141,60 +148,51 @@ class MambaDecoder(nn.Module):
         nn.init.xavier_uniform_(self.out.weight)
 
     def forward(self, x, day_idx, states = None, return_state = False):
-        '''
-        x        (tensor)  - batch of examples (trials) of shape: (batch_size, time_series_length, neural_dim)
-        day_idx  (tensor)  - tensor which is a list of day indexs corresponding to the day of each example in the batch x. 
-        states   (optional) - not used for Mamba (Mamba doesn't maintain explicit hidden states like RNNs)
-        return_state (bool) - if True, return None for states (Mamba doesn't have explicit hidden states)
-        '''
-        # Apply day-specific layer to (hopefully) project neural data from the different days to the same latent space
+        # Apply day-specific layer
         day_weights = torch.stack([self.day_weights[i] for i in day_idx], dim=0)
         day_biases = torch.cat([self.day_biases[i] for i in day_idx], dim=0).unsqueeze(1)
 
         x = torch.einsum("btd,bdk->btk", x, day_weights) + day_biases
         x = self.day_layer_activation(x)
 
-        # Apply dropout to the output of the day specific layer
         if self.input_dropout > 0:
             x = self.day_layer_dropout(x)
 
-        # (Optionally) Perform input concat operation
+        # Perform input concat operation if enabled
         if self.patch_size > 0: 
-            x = x.unsqueeze(1)                      # [batches, 1, timesteps, feature_dim]
-            x = x.permute(0, 3, 1, 2)               # [batches, feature_dim, 1, timesteps]
-            
-            # Extract patches using unfold (sliding window)
-            x_unfold = x.unfold(3, self.patch_size, self.patch_stride)  # [batches, feature_dim, 1, num_patches, patch_size]
-            
-            # Remove dummy height dimension and rearrange dimensions
-            x_unfold = x_unfold.squeeze(2)           # [batches, feature_dum, num_patches, patch_size]
-            x_unfold = x_unfold.permute(0, 2, 3, 1)  # [batches, num_patches, patch_size, feature_dim]
-
-            # Flatten last two dimensions (patch_size and features)
+            x = x.unsqueeze(1)
+            x = x.permute(0, 3, 1, 2)
+            x_unfold = x.unfold(3, self.patch_size, self.patch_stride)
+            x_unfold = x_unfold.squeeze(2)
+            x_unfold = x_unfold.permute(0, 2, 3, 1)
             x = x_unfold.reshape(x.size(0), x_unfold.size(1), -1) 
         
         # Project input to n_units if needed
         x = self.input_proj(x)
         
-        # Pass through bidirectional Mamba layers
+        # Pass through Mamba layers LAYER BY LAYER (not all forward then all backward!)
         if self.bidirectional:
-            # Process forward direction
-            x_forward = x
             for i, mamba_dict in enumerate(self.mamba_layers):
-                x_forward = mamba_dict['forward_mamba'](x_forward)
-                x_forward = self.dropout_layers[i](x_forward)
+                # Process this layer in both directions
+                x_fwd = mamba_dict['forward_mamba'](x)
+                
+                x_bwd = torch.flip(x, dims=[1])
+                x_bwd = mamba_dict['backward_mamba'](x_bwd)
+                x_bwd = torch.flip(x_bwd, dims=[1])
+                
+                # Concatenate both directions
+                x = torch.cat([x_fwd, x_bwd], dim=-1)
+                
+                # Apply dropout
+                x = self.dropout_layers[i](x)
+                
+                # Project back to n_units for next layer (except last layer)
+                if i < self.n_layers - 1:
+                    x = self.inter_projections[i](x)
             
-            # Process backward direction (reverse sequence)
-            x_backward = torch.flip(x, dims=[1])  # Reverse along time dimension
-            for i, mamba_dict in enumerate(self.mamba_layers):
-                x_backward = mamba_dict['backward_mamba'](x_backward)
-                x_backward = self.dropout_layers[i](x_backward)
-            x_backward = torch.flip(x_backward, dims=[1])  # Reverse back to original order
+            output = x  # Shape: (batch, time, 2*n_units) after last layer
             
-            # Concatenate forward and backward outputs
-            output = torch.cat([x_forward, x_backward], dim=-1)
         else:
-            # Unidirectional processing
             output = x
             for i, mamba_block in enumerate(self.mamba_layers):
                 output = mamba_block(output)
@@ -204,7 +202,6 @@ class MambaDecoder(nn.Module):
         logits = self.out(output)
         
         if return_state:
-            # Mamba doesn't maintain explicit hidden states like RNNs, so return None
             return logits, None
         
         return logits
