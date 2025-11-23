@@ -1,8 +1,8 @@
 model:
   architecture: 'MambaDecoder'
   n_input_features: 512
-  n_units: 768  # INCREASED back from 512
-  rnn_dropout: 0.4
+  n_units: 768  # INCREASED back from 512 - unidirectional uses ~50% less memory
+  rnn_dropout: 0.2  # Reduced from 0.4 - layer norm helps with stability
   rnn_trainable: true
   n_layers: 5  # INCREASED back from 4 
   patch_size: 14
@@ -11,8 +11,8 @@ model:
   d_state: 16
   d_conv: 4
   expand: 2
-  bidirectional: false  # UNIDIRECTIONAL - uses ~50% less memory
-  use_gradient_checkpointing: true  # Still useful for memory
+  bidirectional: false  # UNIDIRECTIONAL - uses ~50% less memory, faster training
+  use_gradient_checkpointing: true  # Still useful for memory savings
 
   input_network:
     n_input_layers: 1
@@ -39,14 +39,15 @@ early_stopping_val_steps: 3
 num_training_batches: 10000
 lr_scheduler_type: cosine
 
-lr_max: 0.0001
+# Conservative learning rates - layer norm helps but we want stability
+lr_max: 0.0001  # Can try 0.00015 with layer norm, but start conservative
 lr_min: 0.000005
 lr_decay_steps: 10000
-lr_warmup_steps: 1000
+lr_warmup_steps: 2000  # Longer warmup for stability with layer norm
 lr_max_day: 0.0001
 lr_min_day: 0.000005
 lr_decay_steps_day: 10000
-lr_warmup_steps_day: 1000
+lr_warmup_steps_day: 2000
 
 beta0: 0.9
 beta1: 0.999

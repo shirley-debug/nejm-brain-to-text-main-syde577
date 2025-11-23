@@ -86,9 +86,17 @@ def rearrange_speech_logits_pt(logits):
 # smooths data and puts it through the model.
 def runSingleDecodingStep(x, input_layer, model, model_args, device):
 
-    # Use autocast for efficiency
-    with torch.autocast(device_type = "cuda", enabled = model_args['use_amp'], dtype = torch.bfloat16):
-
+    # Use autocast only if enabled, with appropriate dtype
+    use_amp = model_args.get('use_amp', False)
+    if use_amp:
+        # Use autocast with bfloat16 when AMP is enabled
+        autocast_context = torch.autocast(device_type = "cuda", enabled = True, dtype = torch.bfloat16)
+    else:
+        # Use nullcontext (no autocast) when AMP is disabled - model is in float32
+        from contextlib import nullcontext
+        autocast_context = nullcontext()
+    
+    with autocast_context:
         x = gauss_smooth(
             inputs = x, 
             device = device,
@@ -105,7 +113,7 @@ def runSingleDecodingStep(x, input_layer, model, model_args, device):
                 return_state = True,
             )
 
-    # convert logits from bfloat16 to float32
+    # convert logits to float32 (works for both bfloat16 and float32)
     logits = logits.float().cpu().numpy()
 
     # # original order is [BLANK, phonemes..., SIL]
