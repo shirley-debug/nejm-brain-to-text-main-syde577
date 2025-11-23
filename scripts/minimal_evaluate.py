@@ -17,6 +17,7 @@ import argparse
 import pandas as pd
 
 from rnn_model import GRUDecoder
+import mamba_model
 from evaluate_model_helpers import *
 import torchaudio.functional as F # for edit distance
 
@@ -114,18 +115,44 @@ else:
     print('Using CPU for model inference.')
     device = torch.device('cpu')
 
-# define model
-model = GRUDecoder(
-    neural_dim = model_args['model']['n_input_features'],
-    n_units = model_args['model']['n_units'], 
-    n_days = len(model_args['dataset']['sessions']),
-    n_classes = model_args['dataset']['n_classes'],
-    rnn_dropout = model_args['model']['rnn_dropout'],
-    input_dropout = model_args['model']['input_network']['input_layer_dropout'],
-    n_layers = model_args['model']['n_layers'],
-    patch_size = model_args['model']['patch_size'],
-    patch_stride = model_args['model']['patch_stride'],
-)
+# define model - check architecture from config
+architecture = model_args['model'].get('architecture', 'GRUDecoder')
+print(f"Loading model with architecture: {architecture}")
+
+if architecture == 'MambaDecoder':
+    # Get Mamba-specific parameters with defaults
+    mamba_params = {
+        'd_state': model_args['model'].get('d_state', 16),
+        'd_conv': model_args['model'].get('d_conv', 4),
+        'expand': model_args['model'].get('expand', 2),
+        'bidirectional': model_args['model'].get('bidirectional', True),
+    }
+    model = mamba_model.MambaDecoder(
+        neural_dim = model_args['model']['n_input_features'],
+        n_units = model_args['model']['n_units'], 
+        n_days = len(model_args['dataset']['sessions']),
+        n_classes = model_args['dataset']['n_classes'],
+        rnn_dropout = model_args['model']['rnn_dropout'],
+        input_dropout = model_args['model']['input_network']['input_layer_dropout'],
+        n_layers = model_args['model']['n_layers'],
+        patch_size = model_args['model']['patch_size'],
+        patch_stride = model_args['model']['patch_stride'],
+        **mamba_params
+    )
+elif architecture == 'GRUDecoder':
+    model = GRUDecoder(
+        neural_dim = model_args['model']['n_input_features'],
+        n_units = model_args['model']['n_units'], 
+        n_days = len(model_args['dataset']['sessions']),
+        n_classes = model_args['dataset']['n_classes'],
+        rnn_dropout = model_args['model']['rnn_dropout'],
+        input_dropout = model_args['model']['input_network']['input_layer_dropout'],
+        n_layers = model_args['model']['n_layers'],
+        patch_size = model_args['model']['patch_size'],
+        patch_stride = model_args['model']['patch_stride'],
+    )
+else:
+    raise ValueError(f"Unsupported architecture: {architecture}")
 
 # load model weights
 checkpoint = torch.load(os.path.join(model_path, 'best_checkpoint'), weights_only=False, map_location=device)
