@@ -10,7 +10,6 @@ except ImportError:
     print("WARNING: mamba-ssm not installed. Please install with: pip install mamba-ssm")
     print("Falling back to a placeholder implementation.")
 
-
 class MambaDecoder(nn.Module):
     '''
     Defines the Mamba decoder (bidirectional variant)

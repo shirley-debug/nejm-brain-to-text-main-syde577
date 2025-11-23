@@ -23,6 +23,7 @@ torch.backends.cudnn.deterministic = True # makes training more reproducible
 torch._dynamo.config.cache_size_limit = 64
 
 import rnn_model
+import mamba_model
 
 class BrainToTextDecoder_Trainer:
     """
@@ -143,8 +144,13 @@ class BrainToTextDecoder_Trainer:
         architecture = self.args['model'].get('architecture', 'GRUDecoder')
         self.logger.info(f"Using model architecture: {architecture}")
 
-        # Instantiate model class
-        model_class = getattr(rnn_model, architecture)
+        # Instantiate model class - check both rnn_model and mamba_model
+        if hasattr(rnn_model, architecture):
+            model_class = getattr(rnn_model, architecture)
+        elif hasattr(mamba_model, architecture):
+            model_class = getattr(mamba_model, architecture)
+        else:
+            raise ValueError(f"Architecture '{architecture}' not found in rnn_model or mamba_model modules")
         # Filter params based on what the model accepts
         import inspect
         sig = inspect.signature(model_class.__init__)
