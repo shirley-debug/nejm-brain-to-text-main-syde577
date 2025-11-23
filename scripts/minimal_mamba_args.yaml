@@ -6,7 +6,7 @@ model:
   rnn_trainable: true
   n_layers: 5
   patch_size: 14
-  patch_stride: 4
+  patch_stride: 1
   # Optional Mamba-specific hyperparameters
   d_state: 16        # State space dimension (default: 16)
   d_conv: 4          # Convolution kernel size (default: 4)
@@ -65,7 +65,7 @@ save_val_data: false
 
 dataset:
   data_transforms:
-    white_noise_std: 1.0
+    white_noise_std: 0.2
     constant_offset_std: 0.2
     random_walk_std: 0.0
     random_walk_axis: -1
