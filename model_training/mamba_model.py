@@ -116,13 +116,16 @@ class MambaDecoder(nn.Module):
         if self.bidirectional:
             self.inter_projections = nn.ModuleList()
             self.layer_norms = nn.ModuleList()
+            self.pre_layer_norms = nn.ModuleList()
             for i in range(self.n_layers - 1):
                 proj = nn.Linear(2 * self.n_units, self.n_units)
                 # Initialize with smaller weights to prevent gradient explosion
                 nn.init.xavier_uniform_(proj.weight, gain=0.5)
                 nn.init.zeros_(proj.bias)
                 self.inter_projections.append(proj)
-                # Add layer normalization for stability
+                # Add pre-normalization for stability before Mamba processing
+                self.pre_layer_norms.append(nn.LayerNorm(self.n_units))
+                # Add post-normalization after projection
                 self.layer_norms.append(nn.LayerNorm(self.n_units))
 
         # Output projection
@@ -135,6 +138,13 @@ class MambaDecoder(nn.Module):
     def _forward_mamba_layer(self, x, layer_idx):
         """Helper function for gradient checkpointing - processes one bidirectional layer"""
         mamba_dict = self.mamba_layers[layer_idx]
+        
+        # Save residual connection
+        residual = x
+        
+        # Apply pre-normalization before Mamba processing (if not last layer)
+        if layer_idx < self.n_layers - 1:
+            x = self.pre_layer_norms[layer_idx](x)
         
         # Forward direction
         x_fwd = mamba_dict['forward_mamba'](x)
@@ -153,8 +163,10 @@ class MambaDecoder(nn.Module):
         # Project back to n_units for next layer (if not last layer)
         if layer_idx < self.n_layers - 1:
             x_out = self.inter_projections[layer_idx](x_out)
-            # Apply layer normalization for stability
+            # Apply post-normalization after projection
             x_out = self.layer_norms[layer_idx](x_out)
+            # Add residual connection for gradient stability
+            x_out = x_out + residual
         
         return x_out
 
