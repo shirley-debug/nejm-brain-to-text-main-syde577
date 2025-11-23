@@ -1,22 +1,18 @@
 import torch 
 from torch import nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 try:
     from mamba_ssm import Mamba
     MAMBA_AVAILABLE = True
 except ImportError:
     MAMBA_AVAILABLE = False
-    print("WARNING: mamba-ssm not installed. Please install with: pip install mamba-ssm")
-    print("Falling back to a placeholder implementation.")
+    print("WARNING: mamba-ssm not installed")
 
 class MambaDecoder(nn.Module):
     '''
-    Defines the Mamba decoder (bidirectional variant)
-    
-    This class combines day-specific input layers, bidirectional Mamba blocks, 
-    and an output classification layer. Mamba is a state space model that 
-    efficiently models long-range dependencies.
+    Memory-efficient Mamba decoder with gradient checkpointing
     '''
     def __init__(self,
                  neural_dim,
@@ -32,26 +28,12 @@ class MambaDecoder(nn.Module):
                  d_conv = 4,
                  expand = 2,
                  bidirectional = True,
+                 use_gradient_checkpointing = True,  # NEW PARAMETER
                  ):
-        '''
-        neural_dim  (int)      - number of channels in a single timestep (e.g. 512)
-        n_units     (int)      - number of hidden units in each Mamba layer (d_model)
-        n_days      (int)      - number of days in the dataset
-        n_classes   (int)      - number of classes 
-        rnn_dropout    (float) - dropout rate applied between Mamba layers
-        input_dropout (float)  - percentage of input units to dropout during training
-        n_layers    (int)      - number of Mamba layers 
-        patch_size  (int)      - the number of timesteps to concat on initial input layer - a value of 0 will disable this "input concat" step 
-        patch_stride(int)      - the number of timesteps to stride over when concatenating initial input 
-        d_state     (int)      - state space dimension for Mamba (default: 16)
-        d_conv      (int)      - convolution kernel size for Mamba (default: 4)
-        expand      (int)      - expansion factor for Mamba inner dimension (default: 2)
-        bidirectional (bool)  - whether to use bidirectional Mamba (default: True)
-        '''
         super(MambaDecoder, self).__init__()
         
         if not MAMBA_AVAILABLE:
-            raise ImportError("mamba-ssm is required. Install with: pip install mamba-ssm")
+            raise ImportError("mamba-ssm is required")
         
         self.neural_dim = neural_dim
         self.n_units = n_units
@@ -59,13 +41,7 @@ class MambaDecoder(nn.Module):
         self.n_layers = n_layers 
         self.n_days = n_days
         self.bidirectional = bidirectional
-
-        if self.bidirectional:
-            self.inter_projections = nn.ModuleList()
-            for i in range(self.n_layers - 1):  # Don't need projection after last layer
-                proj = nn.Linear(2 * self.n_units, self.n_units)
-                nn.init.xavier_uniform_(proj.weight)
-                self.inter_projections.append(proj)
+        self.use_gradient_checkpointing = use_gradient_checkpointing
 
         self.rnn_dropout = rnn_dropout
         self.input_dropout = input_dropout
@@ -73,10 +49,9 @@ class MambaDecoder(nn.Module):
         self.patch_size = patch_size
         self.patch_stride = patch_stride
 
-        # Parameters for the day-specific input layers
-        self.day_layer_activation = nn.Softsign() # basically a shallower tanh 
+        # Day-specific input layers
+        self.day_layer_activation = nn.Softsign()
 
-        # Set weights for day layers to be identity matrices so the model can learn its own day-specific transformations
         self.day_weights = nn.ParameterList(
             [nn.Parameter(torch.eye(self.neural_dim)) for _ in range(self.n_days)]
         )
@@ -88,7 +63,6 @@ class MambaDecoder(nn.Module):
         
         self.input_size = self.neural_dim
 
-        # If we are using "strided inputs", then the input size of the first recurrent layer will actually be in_size * patch_size
         if self.patch_size > 0:
             self.input_size *= self.patch_size
 
@@ -96,7 +70,7 @@ class MambaDecoder(nn.Module):
         self.mamba_layers = nn.ModuleList()
         self.dropout_layers = nn.ModuleList()
         
-        # Input projection to match n_units
+        # Input projection
         if self.input_size != self.n_units:
             self.input_proj = nn.Linear(self.input_size, self.n_units)
             nn.init.xavier_uniform_(self.input_proj.weight)
@@ -106,7 +80,6 @@ class MambaDecoder(nn.Module):
         # Create Mamba layers
         for i in range(self.n_layers):
             if self.bidirectional:
-                # Forward and backward Mamba blocks
                 forward_mamba = Mamba(
                     d_model=self.n_units,
                     d_state=d_state,
@@ -119,14 +92,11 @@ class MambaDecoder(nn.Module):
                     d_conv=d_conv,
                     expand=expand,
                 )
-                # Combine into a module that processes both directions
-                # Use 'forward_mamba' and 'backward_mamba' to avoid conflict with 'forward' method
                 self.mamba_layers.append(nn.ModuleDict({
                     'forward_mamba': forward_mamba,
                     'backward_mamba': backward_mamba,
                 }))
             else:
-                # Unidirectional Mamba
                 mamba_block = Mamba(
                     d_model=self.n_units,
                     d_state=d_state,
@@ -135,17 +105,47 @@ class MambaDecoder(nn.Module):
                 )
                 self.mamba_layers.append(mamba_block)
             
-            # Dropout between layers (except after last layer)
             if i < self.n_layers - 1 and self.rnn_dropout > 0:
                 self.dropout_layers.append(nn.Dropout(self.rnn_dropout))
             else:
                 self.dropout_layers.append(nn.Identity())
 
+        # Projection layers for bidirectional intermediate connections
+        if self.bidirectional:
+            self.inter_projections = nn.ModuleList()
+            for i in range(self.n_layers - 1):
+                proj = nn.Linear(2 * self.n_units, self.n_units)
+                nn.init.xavier_uniform_(proj.weight)
+                self.inter_projections.append(proj)
+
         # Output projection
-        # If bidirectional, concatenate forward and backward outputs, so output dim is 2 * n_units
         output_dim = 2 * self.n_units if self.bidirectional else self.n_units
         self.out = nn.Linear(output_dim, self.n_classes)
         nn.init.xavier_uniform_(self.out.weight)
+
+    def _forward_mamba_layer(self, x, layer_idx):
+        """Helper function for gradient checkpointing"""
+        mamba_dict = self.mamba_layers[layer_idx]
+        
+        # Forward direction
+        x_fwd = mamba_dict['forward_mamba'](x)
+        
+        # Backward direction
+        x_bwd = torch.flip(x, dims=[1])
+        x_bwd = mamba_dict['backward_mamba'](x_bwd)
+        x_bwd = torch.flip(x_bwd, dims=[1])
+        
+        # Concatenate
+        x_out = torch.cat([x_fwd, x_bwd], dim=-1)
+        
+        # Apply dropout
+        x_out = self.dropout_layers[layer_idx](x_out)
+        
+        # Project back to n_units for next layer (if not last layer)
+        if layer_idx < self.n_layers - 1:
+            x_out = self.inter_projections[layer_idx](x_out)
+        
+        return x_out
 
     def forward(self, x, day_idx, states = None, return_state = False):
         # Apply day-specific layer
@@ -158,7 +158,7 @@ class MambaDecoder(nn.Module):
         if self.input_dropout > 0:
             x = self.day_layer_dropout(x)
 
-        # Perform input concat operation if enabled
+        # Perform input concat operation
         if self.patch_size > 0: 
             x = x.unsqueeze(1)
             x = x.permute(0, 3, 1, 2)
@@ -167,88 +167,34 @@ class MambaDecoder(nn.Module):
             x_unfold = x_unfold.permute(0, 2, 3, 1)
             x = x_unfold.reshape(x.size(0), x_unfold.size(1), -1) 
         
-        # Project input to n_units if needed
+        # Project input
         x = self.input_proj(x)
         
-        # Pass through Mamba layers LAYER BY LAYER (not all forward then all backward!)
+        # Pass through Mamba layers with gradient checkpointing
         if self.bidirectional:
-            for i, mamba_dict in enumerate(self.mamba_layers):
-                # Process this layer in both directions
-                x_fwd = mamba_dict['forward_mamba'](x)
-                
-                x_bwd = torch.flip(x, dims=[1])
-                x_bwd = mamba_dict['backward_mamba'](x_bwd)
-                x_bwd = torch.flip(x_bwd, dims=[1])
-                
-                # Concatenate both directions
-                x = torch.cat([x_fwd, x_bwd], dim=-1)
-                
-                # Apply dropout
-                x = self.dropout_layers[i](x)
-                
-                # Project back to n_units for next layer (except last layer)
-                if i < self.n_layers - 1:
-                    x = self.inter_projections[i](x)
-            
-            output = x  # Shape: (batch, time, 2*n_units) after last layer
-            
+            for i in range(self.n_layers):
+                if self.training and self.use_gradient_checkpointing:
+                    # Use gradient checkpointing to save memory
+                    x = checkpoint(self._forward_mamba_layer, x, i, use_reentrant=False)
+                else:
+                    x = self._forward_mamba_layer(x, i)
         else:
+            # Unidirectional processing
             output = x
             for i, mamba_block in enumerate(self.mamba_layers):
-                output = mamba_block(output)
+                if self.training and self.use_gradient_checkpointing:
+                    # Checkpoint the mamba block
+                    output = checkpoint(mamba_block, output, use_reentrant=False)
+                else:
+                    output = mamba_block(output)
+                # Apply dropout outside checkpoint (dropout doesn't need gradients)
                 output = self.dropout_layers[i](output)
+            x = output
 
         # Compute logits
-        logits = self.out(output)
+        logits = self.out(x)
         
         if return_state:
             return logits, None
         
         return logits
-
-
-class MambaDecoderUnidirectional(nn.Module):
-    '''
-    Unidirectional Mamba decoder (for comparison or when bidirectional is not needed)
-    
-    Same as MambaDecoder but with bidirectional=False by default.
-    '''
-    def __init__(self,
-                 neural_dim,
-                 n_units,
-                 n_days,
-                 n_classes,
-                 rnn_dropout = 0.0,
-                 input_dropout = 0.0,
-                 n_layers = 5, 
-                 patch_size = 0,
-                 patch_stride = 0,
-                 d_state = 16,
-                 d_conv = 4,
-                 expand = 2,
-                 ):
-        '''
-        Same parameters as MambaDecoder, but bidirectional is always False.
-        '''
-        super(MambaDecoderUnidirectional, self).__init__()
-        
-        # Create a MambaDecoder with bidirectional=False
-        self.decoder = MambaDecoder(
-            neural_dim=neural_dim,
-            n_units=n_units,
-            n_days=n_days,
-            n_classes=n_classes,
-            rnn_dropout=rnn_dropout,
-            input_dropout=input_dropout,
-            n_layers=n_layers,
-            patch_size=patch_size,
-            patch_stride=patch_stride,
-            d_state=d_state,
-            d_conv=d_conv,
-            expand=expand,
-            bidirectional=False,
-        )
-    
-    def forward(self, x, day_idx, states = None, return_state = False):
-        return self.decoder(x, day_idx, states, return_state)
-

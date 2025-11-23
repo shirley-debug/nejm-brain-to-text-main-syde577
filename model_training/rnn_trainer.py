@@ -138,6 +138,7 @@ class BrainToTextDecoder_Trainer:
             'd_conv': self.args['model'].get('d_conv'),
             'expand': self.args['model'].get('expand'),
             'bidirectional': self.args['model'].get('bidirectional'),
+            'use_gradient_checkpointing': self.args['model'].get('use_gradient_checkpointing', True),
         }
 
         # Determine architecture, defaulting to "GRUDecoder" if not provided

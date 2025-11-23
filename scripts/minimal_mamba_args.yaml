@@ -1,17 +1,18 @@
 model:
-  architecture: 'MambaDecoder'  # This is the key change!
+  architecture: 'MambaDecoder'
   n_input_features: 512
-  n_units: 768
+  n_units: 512  # REDUCED from 768 - can increase with gradient checkpointing
   rnn_dropout: 0.4
   rnn_trainable: true
-  n_layers: 5
+  n_layers: 4  # Can use more layers with gradient checkpointing (compred to 3)
   patch_size: 14
   patch_stride: 1
-  # Optional Mamba-specific hyperparameters
-  d_state: 16        # State space dimension (default: 16)
-  d_conv: 4          # Convolution kernel size (default: 4)
-  expand: 2          # Expansion factor (default: 2)
-  bidirectional: true  # Use bidirectional (default: true)
+  # Mamba-specific hyperparameters
+  d_state: 16
+  d_conv: 4
+  expand: 2
+  bidirectional: true
+  use_gradient_checkpointing: true  # CRITICAL for memory
 
   input_network:
     n_input_layers: 1
@@ -20,7 +21,7 @@ model:
     input_trainable: true
     input_layer_dropout: 0.2
 
-gpu_number: '0'  # Use GPU 0 on Kaggle
+gpu_number: '0'
 mode: train
 use_amp: false
 
@@ -37,17 +38,18 @@ early_stopping_val_steps: 3
 
 num_training_batches: 10000
 lr_scheduler_type: cosine
+
 lr_max: 0.0001
-lr_min: 0.00001
+lr_min: 0.000005
 lr_decay_steps: 10000
 lr_warmup_steps: 1000
 lr_max_day: 0.0001
-lr_min_day: 0.00001
+lr_min_day: 0.000005
 lr_decay_steps_day: 10000
 lr_warmup_steps_day: 1000
 
 beta0: 0.9
-beta1: 0.95
+beta1: 0.999
 epsilon: 1e-8
 weight_decay: 0.001
 weight_decay_day: 0
@@ -66,7 +68,7 @@ save_val_data: false
 dataset:
   data_transforms:
     white_noise_std: 0.1
-    constant_offset_std: 0.2
+    constant_offset_std: 0.1
     random_walk_std: 0.0
     random_walk_axis: -1
     static_gain_std: 0.0
@@ -76,7 +78,7 @@ dataset:
     smooth_kernel_std: 2
 
   neural_dim: 512
-  batch_size: 16
+  batch_size: 8  # REDUCED from 16 for memory
   n_classes: 41
   max_seq_elements: 500
   days_per_batch: 2
