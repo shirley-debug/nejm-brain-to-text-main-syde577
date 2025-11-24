@@ -25,13 +25,13 @@ os.environ['DATA_DIR'] = "/kaggle/input/brain-to-text-25-minimal/t15_copyTask_ne
 
 # Find the config file - it should be in the scripts directory
 repo_root = script_dir.parent
-args_path = repo_root / 'scripts' / 'minimal_mamba_args_unidirectional.yaml'
+args_path = repo_root / 'scripts' / 'minimal_mamba_args_uni_compare.yaml'
 if not args_path.exists():
     # Fallback: try current directory
-    args_path = Path('minimal_mamba_args_unidirectional.yaml')
+    args_path = Path('minimal_mamba_args_uni_compare.yaml')
     if not args_path.exists():
         # Another fallback: try scripts directory relative to current working directory
-        args_path = Path('scripts') / 'minimal_mamba_args_unidirectional.yaml'
+        args_path = Path('scripts') / 'minimal_mamba_args_uni_compare.yaml'
     
 print(f"Loading configuration from: {args_path}")
 if not args_path.exists():
