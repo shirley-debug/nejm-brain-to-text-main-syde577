@@ -22,7 +22,7 @@ torch.set_float32_matmul_precision('high') # makes float32 matmuls faster on som
 torch.backends.cudnn.deterministic = True # makes training more reproducible
 torch._dynamo.config.cache_size_limit = 64
 
-from rnn_model import GRUDecoder, LMUDecoder
+import rnn_model
 
 class BrainToTextDecoder_Trainer:
     """
@@ -54,7 +54,6 @@ class BrainToTextDecoder_Trainer:
         self.val_loader = None 
 
         self.transform_args = self.args['dataset']['data_transforms']
-
 
         # Create output directory
         if args['mode'] == 'train':
@@ -116,39 +115,37 @@ class BrainToTextDecoder_Trainer:
             np.random.seed(self.args['seed'])
             random.seed(self.args['seed'])
             torch.manual_seed(self.args['seed'])
+        
+        # Initialize the model
+        model_params = {
+            'neural_dim': self.args['model']['n_input_features'],
+            'n_units': self.args['model']['n_units'],
+            'n_days': len(self.args['dataset']['sessions']),
+            'n_classes': self.args['dataset']['n_classes'],
+            'rnn_dropout': self.args['model']['rnn_dropout'],
+            'input_dropout': self.args['model']['input_network']['input_layer_dropout'],
+            'n_layers': self.args['model']['n_layers'],
+            'patch_size': self.args['model']['patch_size'],
+            'patch_stride': self.args['model']['patch_stride'],
+            # For GRUDecoderWithAdditionalNorm
+            'post_rnn_layers': self.args['model'].get('post_rnn_layers'),
+            'post_rnn_dim': self.args['model'].get('post_rnn_dim', None),
+            'post_rnn_dropout': self.args['model'].get('post_rnn_dropout'),
+            'post_rnn_activation': self.args['model'].get('post_rnn_activation', 'relu'),
+        }
 
-        # Initialize the model 
-        if self.args["model_type"] == "LMU":
-            self.logger.info("Using the LMU model.")
-            self.model = LMUDecoder(
-                neural_dim = self.args['model']['n_input_features'],
-                n_units = self.args['model']['n_units'], 
-                n_days = len(self.args['dataset']['sessions']),
-                n_classes = self.args['dataset']['n_classes'],
-                rnn_dropout = self.args['model']['rnn_dropout'],
-                input_dropout = self.args['model']['input_network']['input_layer_dropout'],
-                n_layers = self.args['model']['n_layers'],
-                patch_size = self.args['model']['patch_size'],
-                patch_stride = self.args['model']['patch_stride'],
-                memory_size = self.args['model']['memory_size'],    # memory vector dimension in LMU
-                theta = self.args['model']['theta'],                # sliding window for LMU
-                learn_a = False,
-                learn_b = False
-            )
-        else:
-            self.logger.info("Using the GRU model.")
-            self.model = GRUDecoder(
-                neural_dim = self.args['model']['n_input_features'],
-                n_units = self.args['model']['n_units'],
-                n_days = len(self.args['dataset']['sessions']),
-                n_classes  = self.args['dataset']['n_classes'],
-                rnn_dropout = self.args['model']['rnn_dropout'], 
-                input_dropout = self.args['model']['input_network']['input_layer_dropout'], 
-                n_layers = self.args['model']['n_layers'],
-                patch_size = self.args['model']['patch_size'],
-                patch_stride = self.args['model']['patch_stride'],
-                layer_norm = self.args['model']['layer_norm'],
-            )
+        # Determine architecture, defaulting to "GRUDecoder" if not provided
+        architecture = self.args['model'].get('architecture', 'GRUDecoder')
+        self.logger.info(f"Using model architecture: {architecture}")
+
+        # Instantiate model class
+        model_class = getattr(rnn_model, architecture)
+        # Filter params based on what the model accepts
+        import inspect
+        sig = inspect.signature(model_class.__init__)
+        valid_params = {k: v for k, v in model_params.items() if k in sig.parameters}
+        self.model = model_class(**valid_params)
+
 
         # Call torch.compile to speed up training
         self.logger.info("Using torch.compile")
@@ -245,7 +242,7 @@ class BrainToTextDecoder_Trainer:
         self.logger.info("Successfully initialized datasets")
 
         # Create optimizer, learning rate scheduler, and loss
-        self.optimizer = self.create_optimizer(optimizer_type=self.args['optimizer_type'])
+        self.optimizer = self.create_optimizer()
 
         if self.args['lr_scheduler_type'] == 'linear':
             self.learning_rate_scheduler = torch.optim.lr_scheduler.LinearLR(
@@ -277,7 +274,7 @@ class BrainToTextDecoder_Trainer:
         # Send model to device 
         self.model.to(self.device)
 
-    def create_optimizer(self, optimizer_type="AdamW"):
+    def create_optimizer(self):
         '''
         Create the optimizer with special param groups 
 
@@ -300,26 +297,36 @@ class BrainToTextDecoder_Trainer:
                     {'params' : bias_params, 'weight_decay' : 0, 'group_type' : 'bias'},
                     {'params' : other_params, 'group_type' : 'other'}
                 ]
+        optim_name = self.args.get("optim", "adamw").lower()
+        param_groups = [g for g in param_groups if len(g["params"]) > 0]
         
-        if optimizer_type == "AdamW":
+        if optim_name == "adagrad":
+            optim = torch.optim.Adagrad(
+                param_groups,
+                lr=self.args['lr_max'],
+                weight_decay=self.args['weight_decay'],
+                eps=1e-10
+            )
+        
+            # Force state tensors onto proper device
+            for group in optim.param_groups:
+                for p in group["params"]:
+                    state = optim.state[p]
+                    if "sum" in state:
+                        state["sum"] = state["sum"].to(p.device)
+                    else:
+                        state["sum"] = torch.zeros_like(p, device=p.device)
+
+
+        else:
             optim = torch.optim.AdamW(
-                param_groups,
-                lr = self.args['lr_max'],
-                betas = (self.args['beta0'], self.args['beta1']),
-                eps = self.args['epsilon'],
-                weight_decay = self.args['weight_decay'],
-                fused = True
-            )
-        elif optimizer_type == "RMSProp":
-            rmsprop_config = self.args['rmsprop']
-            optim = torch.optim.RMSprop(
-                param_groups,
-                lr = self.args['lr_max'],
-                alpha = rmsprop_config.get('alpha', 0.99),
-                eps = rmsprop_config.get('epsilon', 0.00000001),
-                weight_decay = rmsprop_config.get('weight_decay', 0),
-                momentum = rmsprop_config.get('momentum', 0)
-            )
+                    param_groups,
+                    lr = self.args['lr_max'],
+                    betas = (self.args['beta0'], self.args['beta1']),
+                    eps = self.args['epsilon'],
+                    weight_decay = self.args['weight_decay'],
+                    fused = True
+                )
 
         return optim 
 
@@ -469,15 +476,11 @@ class BrainToTextDecoder_Trainer:
         '''
         Apply various augmentations and smoothing to data
         Performing augmentations is much faster on GPU than CPU
-
-        NOTE: n_time_steps = Number of time steps per trial.
         '''
 
         data_shape = features.shape
         batch_size = data_shape[0]
         channels = data_shape[-1]
-
-        assert len(data_shape) == 3
 
         # We only apply these augmentations in training
         if mode == 'train':
@@ -505,86 +508,6 @@ class BrainToTextDecoder_Trainer:
                 cut = np.random.randint(0, self.transform_args['random_cut'])
                 features = features[:, cut:, :]
                 n_time_steps = n_time_steps - cut
-
-            # random contiguous time masking (accounts for varying length of each sequence)
-            if self.transform_args['time_masking'] > 0:
-                mask_ratio = self.transform_args['time_masking']
-                assert 0 < mask_ratio < 1
-
-                # n_time_steps must be a 1D tensor of true lengths
-                assert n_time_steps.ndim == 1 and n_time_steps.shape[0] == batch_size
-
-                seq_lens = n_time_steps.to(self.device)                            # (B,)
-                max_len  = features.shape[1]
-
-                total_masked = (seq_lens * mask_ratio).long().clamp(min=1)
-
-                # 3–5 chunks per sample can be masked out
-                chunks_per_sample = torch.randint(3, 6, (batch_size,), device=self.device)  # (B,)
-                # To ensure efficient vector operations, calculate K chunks for each sample
-                # but each sample may not have exactly chunks_per_sample (could have more or less)
-                K = chunks_per_sample.max().item()  # max chunks across batch
-                chunk_len = (total_masked // chunks_per_sample).clamp(min=1)       # (B,)
-
-                # Chunk's start position  must satisfy [0, seq_len - chunk_len]
-                max_start = (seq_lens - chunk_len).clamp(min=0)                    # (B,)
-                # Generate random start positions for each potential chunk (B,K)
-                rand_u = torch.rand(batch_size, K, device=self.device)
-                # +1 ensures we include the last possible start position
-                starts = (rand_u * (max_start.unsqueeze(1) + 1)).long()            # (B,K)
-                # Compute chunk end indices
-                ends = (starts + chunk_len.unsqueeze(1))                           # (B,K)
-
-                # Create time index grid
-                t = torch.arange(max_len, device=self.device).view(1, 1, max_len)  # (1,1,T)
-                # Expand starts & ends for broadcasting: (B,K,T)
-                starts_exp = starts.unsqueeze(2)
-                ends_exp   = ends.unsqueeze(2)
-                # Mask for each chunk: start <= t < end
-                chunk_masks = (t >= starts_exp) & (t < ends_exp) # (B, K, T)
-                mask = torch.any(chunk_masks, dim=1) # (B,T)
-
-                # Do not mask beyond true seq lengths
-                valid = t < seq_lens.view(batch_size, 1, 1)     # (B,1,T)
-                valid = valid.squeeze(1)                        # (B,T)
-                mask &= valid
-                features[mask] = 0.0
-
-
-            # random contiguous feature (channel) masking 
-            # masks 3-5 contiguous chunks randomly (same as time masking since many channels = 512)
-            if self.transform_args['feature_masking'] > 0:
-                mask_ratio = self.transform_args['feature_masking']
-                assert 0 < mask_ratio < 1
-
-                # total channels to mask per sample
-                total_masked = int(channels * mask_ratio)
-                total_masked = max(total_masked, 1)
-
-                # 3–5 chunks per sample
-                chunks_per_sample = torch.randint(3, 6, (batch_size,), device=self.device)   # (B,)
-                K = chunks_per_sample.max().item()                             # max chunks
-                chunk_len = (total_masked // chunks_per_sample).clamp(min=1)   # (B,)
-
-                max_start = (channels - chunk_len).clamp(min=0)                # (B,)
-                # Chunk's start position  must satisfy [0, seq_len - chunk_len]
-                rand_u = torch.rand(batch_size, K, device=self.device)
-                starts = (rand_u * (max_start.unsqueeze(1) + 1)).long()        # (B,K)
-                # Compute chunk end positions
-                ends = starts + chunk_len.unsqueeze(1)                         # (B,K)
-
-                # Create channel index grid
-                ch = torch.arange(channels, device=self.device).view(1, 1, channels)   # (1,1,C)
-                # Expand start/end for broadcast (B,K,C)
-                starts_exp = starts.unsqueeze(2)
-                ends_exp   = ends.unsqueeze(2)
-                # Compute chunk masks
-                chunk_masks = (ch >= starts_exp) & (ch < ends_exp)             # (B,K,C)
-                feature_mask = torch.any(chunk_masks, dim=1)                   # (B,C)
-                feature_mask = feature_mask.unsqueeze(1).expand(batch_size, features.shape[1], channels)
-
-                features[feature_mask] = 0.0
-
 
         # Apply Gaussian smoothing to data 
         # This is done in both training and validation
@@ -650,15 +573,31 @@ class BrainToTextDecoder_Trainer:
                 # Get phoneme predictions 
                 logits = self.model(features, day_indicies)
 
+                # Compute log-probabilities for CTC + penalty
+                log_probs = torch.permute(logits.log_softmax(2), [1, 0, 2])
+
                 # Calculate CTC Loss
                 loss = self.ctc_loss(
-                    log_probs = torch.permute(logits.log_softmax(2), [1, 0, 2]),
+                    log_probs = log_probs,
                     targets = labels,
                     input_lengths = adjusted_lens,
                     target_lengths = phone_seq_lens
-                    )
-                    
-                loss = torch.mean(loss) # take mean loss over batches
+                )
+
+                # Mean reduction
+                loss = torch.mean(loss)
+
+                # CTC weight from YAML
+                if hasattr(self.args, "loss") and hasattr(self.args.loss, "ctc_weight"):
+                    loss = loss * self.args.loss.ctc_weight
+
+                # blank penalty
+                if hasattr(self.args, "loss") and hasattr(self.args.loss, "blank_penalty"):
+                    if self.args.loss.blank_penalty > 0:
+                        blank_log_probs = log_probs[:, :, 0]  # blank = index 0
+                        blank_pen = (-blank_log_probs.mean()) * self.args.loss.blank_penalty
+                        loss = loss + blank_pen
+
             
             loss.backward()
 
