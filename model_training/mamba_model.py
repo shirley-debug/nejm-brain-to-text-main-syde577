@@ -112,21 +112,24 @@ class MambaDecoder(nn.Module):
             else:
                 self.dropout_layers.append(nn.Identity())
 
-        # Projection layers and layer norms for bidirectional intermediate connections
+        # Layer norms for stability (both bidirectional and unidirectional)
+        self.pre_layer_norms = nn.ModuleList()
+        self.post_layer_norms = nn.ModuleList()
+        for i in range(self.n_layers - 1):
+            # Pre-normalization before Mamba processing
+            self.pre_layer_norms.append(nn.LayerNorm(self.n_units))
+            # Post-normalization after Mamba processing
+            self.post_layer_norms.append(nn.LayerNorm(self.n_units))
+        
+        # Projection layers for bidirectional intermediate connections
         if self.bidirectional:
             self.inter_projections = nn.ModuleList()
-            self.layer_norms = nn.ModuleList()
-            self.pre_layer_norms = nn.ModuleList()
             for i in range(self.n_layers - 1):
                 proj = nn.Linear(2 * self.n_units, self.n_units)
                 # Initialize with smaller weights to prevent gradient explosion
                 nn.init.xavier_uniform_(proj.weight, gain=0.5)
                 nn.init.zeros_(proj.bias)
                 self.inter_projections.append(proj)
-                # Add pre-normalization for stability before Mamba processing
-                self.pre_layer_norms.append(nn.LayerNorm(self.n_units))
-                # Add post-normalization after projection
-                self.layer_norms.append(nn.LayerNorm(self.n_units))
 
         # Output projection
         output_dim = 2 * self.n_units if self.bidirectional else self.n_units
@@ -164,7 +167,7 @@ class MambaDecoder(nn.Module):
         if layer_idx < self.n_layers - 1:
             x_out = self.inter_projections[layer_idx](x_out)
             # Apply post-normalization after projection
-            x_out = self.layer_norms[layer_idx](x_out)
+            x_out = self.post_layer_norms[layer_idx](x_out)
             # Add residual connection for gradient stability
             x_out = x_out + residual
         
@@ -223,13 +226,28 @@ class MambaDecoder(nn.Module):
                     # Regular forward pass (used during validation/testing)
                     x = self._forward_mamba_layer(x, i)
         else:
-            # Unidirectional processing
+            # Unidirectional processing with residual connections
             for i, mamba_block in enumerate(self.mamba_layers):
+                # Save residual
+                residual = x
+                
+                # Pre-normalization (if not last layer)
+                if i < self.n_layers - 1:
+                    x = self.pre_layer_norms[i](x)
+                
+                # Mamba processing
                 if self.training and self.use_gradient_checkpointing:
                     x = checkpoint(mamba_block, x, use_reentrant=False)
                 else:
                     x = mamba_block(x)
+                
+                # Dropout
                 x = self.dropout_layers[i](x)
+                
+                # Post-normalization and residual (if not last layer)
+                if i < self.n_layers - 1:
+                    x = self.post_layer_norms[i](x)
+                    x = x + residual
 
         # Compute logits
         logits = self.out(x)
