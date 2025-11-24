@@ -132,6 +132,7 @@ class BrainToTextDecoder_Trainer:
             'post_rnn_dim': self.args['model'].get('post_rnn_dim', None),
             'post_rnn_dropout': self.args['model'].get('post_rnn_dropout'),
             'post_rnn_activation': self.args['model'].get('post_rnn_activation', 'relu'),
+            'layer_norm': self.args['model'].get('layer_norm', False),
         }
 
         # Determine architecture, defaulting to "GRUDecoder" if not provided
