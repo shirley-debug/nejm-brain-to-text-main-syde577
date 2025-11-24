@@ -105,13 +105,14 @@ def evaluate_model(checkpoint_dir, model_name, eval_type, repo_root=None):
     ]
 
     print(f"[{model_name}] Running {eval_type.upper()} evaluation...")
+    print(f"Command: {' '.join(cmd)}")
     
     try:
-        # Run from the scripts directory
+        # Run from the scripts directory - don't capture output so we can see errors
         work_dir = str(repo_root / 'scripts')
-        subprocess.run(cmd, check=True, cwd=work_dir, capture_output=True)
+        result = subprocess.run(cmd, check=True, cwd=work_dir, capture_output=False)
     except subprocess.CalledProcessError as e:
-        print(f"[{model_name}] WARNING: {eval_type} evaluation failed with error: {e}")
+        print(f"[{model_name}] WARNING: {eval_type} evaluation failed with exit code: {e.returncode}")
         return None
 
     # The output CSV is saved in scripts/output directory (relative to where minimal_evaluate.py runs)

@@ -180,6 +180,10 @@ class MambaDecoder(nn.Module):
         # Apply day-specific layer
         day_weights = torch.stack([self.day_weights[i] for i in day_idx], dim=0)
         day_biases = torch.cat([self.day_biases[i] for i in day_idx], dim=0).unsqueeze(1)
+        
+        # Ensure day weights and biases match input dtype (for mixed precision compatibility)
+        day_weights = day_weights.to(x.dtype)
+        day_biases = day_biases.to(x.dtype)
 
         x = torch.einsum("btd,bdk->btk", x, day_weights) + day_biases
         x = self.day_layer_activation(x)
@@ -187,6 +191,9 @@ class MambaDecoder(nn.Module):
         # Apply dropout to the output of the day specific layer
         if self.input_dropout > 0:
             x = self.day_layer_dropout(x)
+        
+        # Convert back to float32 for rest of model (handles BFloat16 inputs during eval)
+        x = x.float()
 
         # (Optionally) Perform input concat operation
         if self.patch_size > 0: 
