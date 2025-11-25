@@ -321,6 +321,17 @@ class BrainToTextDecoder_Trainer:
                 momentum = rmsprop_config.get('momentum', 0)
             )
 
+        elif optimizer_type == "SGD":
+            optim = torch.optim.SGD(
+                param_groups,
+                lr = self.args['lr_max'],
+                momentum = self.args['momentum'],
+                weight_decay = self.args['weight_decay'],
+                nesterov = self.args['nesterov'],
+            )
+        else:
+            raise ValueError(f"Invalid optimizer type: {optimizer_type}")
+
         return optim 
 
     def create_cosine_lr_scheduler(self, optim):
