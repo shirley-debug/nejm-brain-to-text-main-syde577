@@ -2,10 +2,10 @@ model:
   architecture: 'BiGRUDecoder'
   bidirectional: true
   n_input_features: 512
-  n_units: 768
+  n_units: 512
   rnn_dropout: 0.4
   rnn_trainable: true
-  n_layers: 5
+  n_layers: 4
   patch_size: 14
   patch_stride: 4
 
@@ -14,7 +14,7 @@ model:
     input_layer_sizes:
     - 512
     input_trainable: true
-    input_layer_dropout: 0.2
+    input_layer_dropout: 0.4
 
 gpu_number: '1'
 mode: train
