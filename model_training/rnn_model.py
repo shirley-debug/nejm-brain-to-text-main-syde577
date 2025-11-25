@@ -453,7 +453,7 @@ class LSTM(nn.Module):
 class BiGRUDecoder(nn.Module):
     """
     Bidirectional GRU version of the original GRUDecoder.
-    Produces per-time-step logits for sequence tasks (phonemes, PER).
+    Produces per-time-step logits for sequence tasks.
     """
     def __init__(self,
                  neural_dim,
