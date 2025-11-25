@@ -661,15 +661,31 @@ class BrainToTextDecoder_Trainer:
                 # Get phoneme predictions 
                 logits = self.model(features, day_indicies)
 
+                 # Compute log-probabilities for CTC + penalty
+                log_probs = torch.permute(logits.log_softmax(2), [1, 0, 2])
+
                 # Calculate CTC Loss
                 loss = self.ctc_loss(
-                    log_probs = torch.permute(logits.log_softmax(2), [1, 0, 2]),
+                    log_probs = log_probs,
                     targets = labels,
                     input_lengths = adjusted_lens,
                     target_lengths = phone_seq_lens
-                    )
-                    
-                loss = torch.mean(loss) # take mean loss over batches
+                )
+
+                # Mean reduction
+                loss = torch.mean(loss)
+
+                # CTC weight from YAML
+                if hasattr(self.args, "loss") and hasattr(self.args.loss, "ctc_weight"):
+                    loss = loss * self.args.loss.ctc_weight
+
+                # blank penalty
+                if hasattr(self.args, "loss") and hasattr(self.args.loss, "blank_penalty"):
+                    if self.args.loss.blank_penalty > 0:
+                        blank_log_probs = log_probs[:, :, 0]  # blank = index 0
+                        blank_pen = (-blank_log_probs.mean()) * self.args.loss.blank_penalty
+                        loss = loss + blank_pen
+
             
             loss.backward()
 

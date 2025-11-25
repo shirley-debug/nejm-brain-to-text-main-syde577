@@ -1,4 +1,6 @@
 model:
+  architecture: 'BiGRUDecoder'
+  bidirectional: true
   n_input_features: 512
   n_units: 768
   rnn_dropout: 0.4
@@ -13,6 +15,9 @@ model:
     - 512
     input_trainable: true
     input_layer_dropout: 0.2
+loss:
+  ctc_weight: 1.4
+  blank_penalty: 0.03
 gpu_number: '1'
 distributed_training: false
 mode: train
