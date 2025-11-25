@@ -72,6 +72,10 @@ dataset:
     smooth_kernel_size: 100
     smooth_data: true
     smooth_kernel_std: 2
+    feature_masking: 0.05
+    feature_masking_prob: 0.3
+    time_masking: 0.10
+    time_masking_prob: 0.5
 
   neural_dim: 512
   batch_size: 16
