@@ -297,36 +297,15 @@ class BrainToTextDecoder_Trainer:
                     {'params' : bias_params, 'weight_decay' : 0, 'group_type' : 'bias'},
                     {'params' : other_params, 'group_type' : 'other'}
                 ]
-        optim_name = self.args.get("optim", "adamw").lower()
-        param_groups = [g for g in param_groups if len(g["params"]) > 0]
-        
-        if optim_name == "adagrad":
-            optim = torch.optim.Adagrad(
-                param_groups,
-                lr=self.args['lr_max'],
-                weight_decay=self.args['weight_decay'],
-                eps=1e-10
-            )
-        
-            # Force state tensors onto proper device
-            for group in optim.param_groups:
-                for p in group["params"]:
-                    state = optim.state[p]
-                    if "sum" in state:
-                        state["sum"] = state["sum"].to(p.device)
-                    else:
-                        state["sum"] = torch.zeros_like(p, device=p.device)
-
-
-        else:
-            optim = torch.optim.AdamW(
-                    param_groups,
-                    lr = self.args['lr_max'],
-                    betas = (self.args['beta0'], self.args['beta1']),
-                    eps = self.args['epsilon'],
-                    weight_decay = self.args['weight_decay'],
-                    fused = True
-                )
+            
+        optim = torch.optim.AdamW(
+            param_groups,
+            lr = self.args['lr_max'],
+            betas = (self.args['beta0'], self.args['beta1']),
+            eps = self.args['epsilon'],
+            weight_decay = self.args['weight_decay'],
+            fused = True
+        )
 
         return optim 
 
@@ -573,31 +552,15 @@ class BrainToTextDecoder_Trainer:
                 # Get phoneme predictions 
                 logits = self.model(features, day_indicies)
 
-                # Compute log-probabilities for CTC + penalty
-                log_probs = torch.permute(logits.log_softmax(2), [1, 0, 2])
-
                 # Calculate CTC Loss
                 loss = self.ctc_loss(
-                    log_probs = log_probs,
+                    log_probs = torch.permute(logits.log_softmax(2), [1, 0, 2]),
                     targets = labels,
                     input_lengths = adjusted_lens,
                     target_lengths = phone_seq_lens
-                )
-
-                # Mean reduction
-                loss = torch.mean(loss)
-
-                # CTC weight from YAML
-                if hasattr(self.args, "loss") and hasattr(self.args.loss, "ctc_weight"):
-                    loss = loss * self.args.loss.ctc_weight
-
-                # blank penalty
-                if hasattr(self.args, "loss") and hasattr(self.args.loss, "blank_penalty"):
-                    if self.args.loss.blank_penalty > 0:
-                        blank_log_probs = log_probs[:, :, 0]  # blank = index 0
-                        blank_pen = (-blank_log_probs.mean()) * self.args.loss.blank_penalty
-                        loss = loss + blank_pen
-
+                    )
+                    
+                loss = torch.mean(loss) # take mean loss over batches
             
             loss.backward()
 

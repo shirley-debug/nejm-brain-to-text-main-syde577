@@ -36,8 +36,6 @@ parser.add_argument('--gpu_number', type=int, default=1,
 parser.add_argument('--sessions', type=str, nargs='+', default=None,
                     help='Specify one or more sessions to evaluate (e.g., "t15.2023.08.18" "t15.2023.08.20"). '
                          'If not specified, all sessions in the model config will be evaluated.')
-parser.add_argument('--output_dir', type=str, default=None,
-                    help='Directory to output phoneme predictions to.')
 parser.add_argument('--phoneme_predictions_csv', type=str, default=None,
                     help='If provided, skip phoneme prediction and only run analyze_predictions.')
 args = parser.parse_args()
