@@ -21,11 +21,11 @@ mode: train
 use_amp: true
 
 loss:
-  ctc_weight: 1.4
-  blank_penalty: 0.03
+  ctc_weight: 1.5
+  blank_penalty: 0.04
 
-output_dir: /kaggle/working/trained_models/final_model_2
-checkpoint_dir: /kaggle/working/trained_models/final_model_2/checkpoints
+output_dir: /kaggle/working/trained_models/final_model_22
+checkpoint_dir: /kaggle/working/trained_models/final_model_22/checkpoints
 init_from_checkpoint: false
 init_checkpoint_path: None
 save_best_checkpoint: true
