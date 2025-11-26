@@ -24,10 +24,10 @@ loss:
   ctc_weight: 1.5
   blank_penalty: 0.04
 
-output_dir: /kaggle/working/trained_models/final_model_22
-checkpoint_dir: /kaggle/working/trained_models/final_model_22/checkpoints
+output_dir: ${oc.env:OUTPUT_DIR}
+checkpoint_dir: ${oc.env:OUTPUT_DIR}/checkpoint
 init_from_checkpoint: false
-init_checkpoint_path: None
+init_checkpoint_path: false
 save_best_checkpoint: true
 save_all_val_steps: false
 save_final_model: false
@@ -46,7 +46,7 @@ lr_min_day: 0.0001
 lr_decay_steps_day: 10000
 lr_warmup_steps_day: 1000
 
-optim: adagrad
+optimizer_type: adagrad
 weight_decay: 0.0005
 weight_decay_day: 0
 seed: 10
