@@ -16,7 +16,7 @@ from tqdm import tqdm
 import argparse
 import pandas as pd
 
-from rnn_model import GRUDecoder
+import rnn_model
 from evaluate_model_helpers import *
 import torchaudio.functional as F # for edit distance
 
@@ -116,18 +116,28 @@ else:
     print('Using CPU for model inference.')
     device = torch.device('cpu')
 
-# define model
-model = GRUDecoder(
-    neural_dim = model_args['model']['n_input_features'],
-    n_units = model_args['model']['n_units'], 
-    n_days = len(model_args['dataset']['sessions']),
-    n_classes = model_args['dataset']['n_classes'],
-    rnn_dropout = model_args['model']['rnn_dropout'],
-    input_dropout = model_args['model']['input_network']['input_layer_dropout'],
-    n_layers = model_args['model']['n_layers'],
-    patch_size = model_args['model']['patch_size'],
-    patch_stride = model_args['model']['patch_stride'],
-)
+# define model - dynamically load architecture from saved args
+architecture = model_args['model'].get('architecture', 'GRUDecoder')
+print(f"Loading model architecture: {architecture}")
+
+model_class = getattr(rnn_model, architecture)
+model_params = {
+    'neural_dim': model_args['model']['n_input_features'],
+    'n_units': model_args['model']['n_units'], 
+    'n_days': len(model_args['dataset']['sessions']),
+    'n_classes': model_args['dataset']['n_classes'],
+    'rnn_dropout': model_args['model']['rnn_dropout'],
+    'input_dropout': model_args['model']['input_network']['input_layer_dropout'],
+    'n_layers': model_args['model']['n_layers'],
+    'patch_size': model_args['model']['patch_size'],
+    'patch_stride': model_args['model']['patch_stride'],
+}
+
+# Filter params based on what the model accepts
+import inspect
+sig = inspect.signature(model_class.__init__)
+valid_params = {k: v for k, v in model_params.items() if k in sig.parameters}
+model = model_class(**valid_params)
 
 # load model weights
 checkpoint = torch.load(os.path.join(model_path, 'best_checkpoint'), weights_only=False, map_location=device)
