@@ -47,7 +47,7 @@ def run_single_repeat(run_idx, base_args, original_output_dir, original_checkpoi
         shutil.rmtree(args.checkpoint_dir)
     
     # Set seed for this run
-    run_seed = BASE_SEED + run_idx
+    run_seed = BASE_SEED - run_idx
     args.seed = run_seed
     seed_everything(run_seed)
     
