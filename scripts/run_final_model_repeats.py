@@ -131,6 +131,9 @@ def evaluate_model(run_result, eval_type='test'):
     # Get data directory from environment or use default
     data_dir = os.environ.get('DATA_DIR', '/kaggle/input/brain-to-text-25-minimal/t15_copyTask_neuralData/hdf5_data_final')
     
+    # CSV path
+    csv_path = 'data/t15_copyTaskData_description.csv'
+    
     # Build command to call minimal_evaluate.py
     cmd = [
         'python',
@@ -138,6 +141,7 @@ def evaluate_model(run_result, eval_type='test'):
         '--model_path', str(checkpoint_dir),
         '--eval_type', eval_type,
         '--data_dir', data_dir,
+        '--csv_path', csv_path,
         '--output_dir', str(eval_output_dir),
         '--gpu_number', '1',
     ]
