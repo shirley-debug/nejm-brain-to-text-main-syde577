@@ -55,6 +55,7 @@ class BrainToTextDecoder_Trainer:
 
         self.transform_args = self.args['dataset']['data_transforms']
 
+
         # Create output directory
         if args['mode'] == 'train':
             os.makedirs(self.args['output_dir'], exist_ok=False)
@@ -243,7 +244,7 @@ class BrainToTextDecoder_Trainer:
         self.logger.info("Successfully initialized datasets")
 
         # Create optimizer, learning rate scheduler, and loss
-        self.optimizer = self.create_optimizer()
+        self.optimizer = self.create_optimizer(optimizer_type=self.args['optimizer_type'])
 
         if self.args['lr_scheduler_type'] == 'linear':
             self.learning_rate_scheduler = torch.optim.lr_scheduler.LinearLR(
@@ -275,7 +276,7 @@ class BrainToTextDecoder_Trainer:
         # Send model to device 
         self.model.to(self.device)
 
-    def create_optimizer(self):
+    def create_optimizer(self, optimizer_type="AdamW"):
         '''
         Create the optimizer with special param groups 
 
@@ -298,10 +299,11 @@ class BrainToTextDecoder_Trainer:
                     {'params' : bias_params, 'weight_decay' : 0, 'group_type' : 'bias'},
                     {'params' : other_params, 'group_type' : 'other'}
                 ]
-        optim_name = self.args.get("optim", "adamw").lower()
-        param_groups = [g for g in param_groups if len(g["params"]) > 0]
+
         
-        if optim_name == "adagrad":
+        if optimizer_type == "adagrad":
+            param_groups = [g for g in param_groups if len(g["params"]) > 0]
+            
             optim = torch.optim.Adagrad(
                 param_groups,
                 lr=self.args['lr_max'],
@@ -318,6 +320,25 @@ class BrainToTextDecoder_Trainer:
                     else:
                         state["sum"] = torch.zeros_like(p, device=p.device)
 
+        elif optimizer_type == "RMSProp":
+            rmsprop_config = self.args['rmsprop']
+            optim = torch.optim.RMSprop(
+                param_groups,
+                lr = self.args['lr_max'],
+                alpha = rmsprop_config.get('alpha', 0.99),
+                eps = rmsprop_config.get('epsilon', 0.00000001),
+                weight_decay = rmsprop_config.get('weight_decay', 0),
+                momentum = rmsprop_config.get('momentum', 0)
+            )
+
+        elif optimizer_type == "SGD":
+            optim = torch.optim.SGD(
+                param_groups,
+                lr = self.args['lr_max'],
+                momentum = self.args['momentum'],
+                weight_decay = self.args['weight_decay'],
+                nesterov = self.args['nesterov'],
+            )
 
         else:
             optim = torch.optim.AdamW(
@@ -477,11 +498,15 @@ class BrainToTextDecoder_Trainer:
         '''
         Apply various augmentations and smoothing to data
         Performing augmentations is much faster on GPU than CPU
+
+        NOTE: n_time_steps = Number of time steps per trial.
         '''
 
         data_shape = features.shape
         batch_size = data_shape[0]
         channels = data_shape[-1]
+
+        assert len(data_shape) == 3
 
         # We only apply these augmentations in training
         if mode == 'train':
@@ -509,6 +534,86 @@ class BrainToTextDecoder_Trainer:
                 cut = np.random.randint(0, self.transform_args['random_cut'])
                 features = features[:, cut:, :]
                 n_time_steps = n_time_steps - cut
+
+            # random contiguous time masking (accounts for varying length of each sequence)
+            if self.transform_args['time_masking'] > 0:
+                mask_ratio = self.transform_args['time_masking']
+                assert 0 < mask_ratio < 1
+
+                # n_time_steps must be a 1D tensor of true lengths
+                assert n_time_steps.ndim == 1 and n_time_steps.shape[0] == batch_size
+
+                seq_lens = n_time_steps.to(self.device)                            # (B,)
+                max_len  = features.shape[1]
+
+                total_masked = (seq_lens * mask_ratio).long().clamp(min=1)
+
+                # 3–5 chunks per sample can be masked out
+                chunks_per_sample = torch.randint(3, 6, (batch_size,), device=self.device)  # (B,)
+                # To ensure efficient vector operations, calculate K chunks for each sample
+                # but each sample may not have exactly chunks_per_sample (could have more or less)
+                K = chunks_per_sample.max().item()  # max chunks across batch
+                chunk_len = (total_masked // chunks_per_sample).clamp(min=1)       # (B,)
+
+                # Chunk's start position  must satisfy [0, seq_len - chunk_len]
+                max_start = (seq_lens - chunk_len).clamp(min=0)                    # (B,)
+                # Generate random start positions for each potential chunk (B,K)
+                rand_u = torch.rand(batch_size, K, device=self.device)
+                # +1 ensures we include the last possible start position
+                starts = (rand_u * (max_start.unsqueeze(1) + 1)).long()            # (B,K)
+                # Compute chunk end indices
+                ends = (starts + chunk_len.unsqueeze(1))                           # (B,K)
+
+                # Create time index grid
+                t = torch.arange(max_len, device=self.device).view(1, 1, max_len)  # (1,1,T)
+                # Expand starts & ends for broadcasting: (B,K,T)
+                starts_exp = starts.unsqueeze(2)
+                ends_exp   = ends.unsqueeze(2)
+                # Mask for each chunk: start <= t < end
+                chunk_masks = (t >= starts_exp) & (t < ends_exp) # (B, K, T)
+                mask = torch.any(chunk_masks, dim=1) # (B,T)
+
+                # Do not mask beyond true seq lengths
+                valid = t < seq_lens.view(batch_size, 1, 1)     # (B,1,T)
+                valid = valid.squeeze(1)                        # (B,T)
+                mask &= valid
+                features[mask] = 0.0
+
+
+            # random contiguous feature (channel) masking 
+            # masks 3-5 contiguous chunks randomly (same as time masking since many channels = 512)
+            if self.transform_args['feature_masking'] > 0:
+                mask_ratio = self.transform_args['feature_masking']
+                assert 0 < mask_ratio < 1
+
+                # total channels to mask per sample
+                total_masked = int(channels * mask_ratio)
+                total_masked = max(total_masked, 1)
+
+                # 3–5 chunks per sample
+                chunks_per_sample = torch.randint(3, 6, (batch_size,), device=self.device)   # (B,)
+                K = chunks_per_sample.max().item()                             # max chunks
+                chunk_len = (total_masked // chunks_per_sample).clamp(min=1)   # (B,)
+
+                max_start = (channels - chunk_len).clamp(min=0)                # (B,)
+                # Chunk's start position  must satisfy [0, seq_len - chunk_len]
+                rand_u = torch.rand(batch_size, K, device=self.device)
+                starts = (rand_u * (max_start.unsqueeze(1) + 1)).long()        # (B,K)
+                # Compute chunk end positions
+                ends = starts + chunk_len.unsqueeze(1)                         # (B,K)
+
+                # Create channel index grid
+                ch = torch.arange(channels, device=self.device).view(1, 1, channels)   # (1,1,C)
+                # Expand start/end for broadcast (B,K,C)
+                starts_exp = starts.unsqueeze(2)
+                ends_exp   = ends.unsqueeze(2)
+                # Compute chunk masks
+                chunk_masks = (ch >= starts_exp) & (ch < ends_exp)             # (B,K,C)
+                feature_mask = torch.any(chunk_masks, dim=1)                   # (B,C)
+                feature_mask = feature_mask.unsqueeze(1).expand(batch_size, features.shape[1], channels)
+
+                features[feature_mask] = 0.0
+
 
         # Apply Gaussian smoothing to data 
         # This is done in both training and validation
@@ -574,7 +679,7 @@ class BrainToTextDecoder_Trainer:
                 # Get phoneme predictions 
                 logits = self.model(features, day_indicies)
 
-                # Compute log-probabilities for CTC + penalty
+                 # Compute log-probabilities for CTC + penalty
                 log_probs = torch.permute(logits.log_softmax(2), [1, 0, 2])
 
                 # Calculate CTC Loss
