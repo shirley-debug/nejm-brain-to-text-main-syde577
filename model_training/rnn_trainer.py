@@ -297,15 +297,29 @@ class BrainToTextDecoder_Trainer:
                     {'params' : bias_params, 'weight_decay' : 0, 'group_type' : 'bias'},
                     {'params' : other_params, 'group_type' : 'other'}
                 ]
-            
-        optim = torch.optim.AdamW(
-            param_groups,
-            lr = self.args['lr_max'],
-            betas = (self.args['beta0'], self.args['beta1']),
-            eps = self.args['epsilon'],
-            weight_decay = self.args['weight_decay'],
-            fused = True
-        )
+        
+        # Check optimizer type from config, default to AdamW
+        optimizer_type = self.args.get('optimizer_type', 'AdamW')
+        
+        if optimizer_type == 'SGD':
+            optim = torch.optim.SGD(
+                param_groups,
+                lr = self.args['lr_max'],
+                momentum = self.args.get('momentum', 0.9),
+                weight_decay = self.args['weight_decay'],
+                nesterov = self.args.get('nesterov', False),
+            )
+        elif optimizer_type == 'AdamW':
+            optim = torch.optim.AdamW(
+                param_groups,
+                lr = self.args['lr_max'],
+                betas = (self.args['beta0'], self.args['beta1']),
+                eps = self.args['epsilon'],
+                weight_decay = self.args['weight_decay'],
+                fused = True
+            )
+        else:
+            raise ValueError(f"Unsupported optimizer type: {optimizer_type}")
 
         return optim 
 

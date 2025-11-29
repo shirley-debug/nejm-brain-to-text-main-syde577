@@ -16,9 +16,10 @@ from tqdm import tqdm
 import argparse
 import pandas as pd
 
-from rnn_model import GRUDecoder
+import rnn_model
 from evaluate_model_helpers import *
 import torchaudio.functional as F # for edit distance
+import inspect
 
 # argument parser for command line arguments
 parser = argparse.ArgumentParser(description='Evaluate a pretrained RNN model on the copy task dataset.')
