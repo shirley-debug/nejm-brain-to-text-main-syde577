@@ -254,12 +254,38 @@ class BrainToTextDecoder_Trainer:
         elif self.args['lr_scheduler_type'] == 'cosine':
             self.learning_rate_scheduler = self.create_cosine_lr_scheduler(self.optimizer)
         elif self.args['lr_scheduler_type'] == 'step':
-            self.learning_rate_scheduler = torch.optim.lr_scheduler.StepLR(
-                optimizer = self.optimizer,
-                step_size = self.args.get('lr_step_size', 2000),
-                gamma = self.args.get('lr_gamma', 0.3),
+            # Use LambdaLR to add warmup support to StepLR
+            step_size = self.args.get('lr_step_size', 2000)
+            gamma = self.args.get('lr_gamma', 0.3)
+            warmup_steps = self.args.get('lr_warmup_steps', 1000)
+            warmup_steps_day = self.args.get('lr_warmup_steps_day', 1000)
+            
+            def step_decay_with_warmup(step, warmup):
+                if warmup > 0 and step < warmup:
+                    return float(step) / float(max(1, warmup))
+                decay_count = (step - warmup) // step_size
+                return gamma ** decay_count
+            
+            num_groups = len(self.optimizer.param_groups)
+            if num_groups == 3:
+                lr_lambdas = [
+                    lambda step: step_decay_with_warmup(step, warmup_steps),
+                    lambda step: step_decay_with_warmup(step, warmup_steps_day),
+                    lambda step: step_decay_with_warmup(step, warmup_steps),
+                ]
+            elif num_groups == 2:
+                lr_lambdas = [
+                    lambda step: step_decay_with_warmup(step, warmup_steps),
+                    lambda step: step_decay_with_warmup(step, warmup_steps),
+                ]
+            else:
+                raise ValueError(f"Unexpected number of param groups: {num_groups}")
+            
+            self.learning_rate_scheduler = torch.optim.lr_scheduler.LambdaLR(
+                optimizer=self.optimizer,
+                lr_lambda=lr_lambdas,
             )
-            self.logger.info(f"Using StepLR scheduler: step_size={self.args.get('lr_step_size', 2000)}, gamma={self.args.get('lr_gamma', 0.3)}")
+            self.logger.info(f"Using StepLR with warmup: step_size={step_size}, gamma={gamma}, warmup={warmup_steps}")
         
         else:
             raise ValueError(f"Invalid learning rate scheduler type: {self.args['lr_scheduler_type']}")
