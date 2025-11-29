@@ -253,6 +253,13 @@ class BrainToTextDecoder_Trainer:
             )
         elif self.args['lr_scheduler_type'] == 'cosine':
             self.learning_rate_scheduler = self.create_cosine_lr_scheduler(self.optimizer)
+        elif self.args['lr_scheduler_type'] == 'step':
+            self.learning_rate_scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer = self.optimizer,
+                step_size = self.args.get('lr_step_size', 2000),
+                gamma = self.args.get('lr_gamma', 0.3),
+            )
+            self.logger.info(f"Using StepLR scheduler: step_size={self.args.get('lr_step_size', 2000)}, gamma={self.args.get('lr_gamma', 0.3)}")
         
         else:
             raise ValueError(f"Invalid learning rate scheduler type: {self.args['lr_scheduler_type']}")
@@ -307,7 +314,7 @@ class BrainToTextDecoder_Trainer:
                 lr = self.args['lr_max'],
                 momentum = self.args.get('momentum', 0.9),
                 weight_decay = self.args['weight_decay'],
-                nesterov = self.args.get('nesterov', False),
+                nesterov = self.args.get('nesterov', True),
             )
         elif optimizer_type == 'AdamW':
             optim = torch.optim.AdamW(
