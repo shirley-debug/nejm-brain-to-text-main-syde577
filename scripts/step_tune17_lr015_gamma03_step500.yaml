@@ -17,8 +17,8 @@ model:
 gpu_number: '1'
 mode: train
 use_amp: true
-output_dir: /kaggle/working/output_step5
-checkpoint_dir: /kaggle/working/output_step5/checkpoints
+output_dir: /kaggle/working/output_step17
+checkpoint_dir: /kaggle/working/output_step17/checkpoints
 init_from_checkpoint: false
 init_checkpoint_path: None
 save_best_checkpoint: true
