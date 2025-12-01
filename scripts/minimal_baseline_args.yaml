@@ -33,7 +33,7 @@ save_val_metrics: true
 early_stopping: false
 early_stopping_val_steps: 3
 num_training_batches: 10000
-optimizer_type: SGD
+optimizer_type: novograd
 lr_scheduler_type: cosine
 lr_max: 0.015
 lr_min: 0.0001
@@ -45,10 +45,11 @@ lr_decay_steps_day: 10000
 lr_warmup_steps_day: 1000
 momentum: 0.88
 nesterov: true
-beta0: 0.9
-beta1: 0.999
-epsilon: 0.1
-weight_decay: 0.00446415850230071
+beta0: 0.95
+beta1: 0.0
+grad_averaging: false
+epsilon: 1e-8
+weight_decay: 0.0003
 weight_decay_day: 0
 seed: 10
 grad_norm_clip_value: 10
