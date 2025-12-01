@@ -1,3 +1,4 @@
+import torch_optimizer
 import torch 
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import LambdaLR
@@ -325,6 +326,15 @@ class BrainToTextDecoder_Trainer:
                 momentum = self.args['momentum'],
                 weight_decay = self.args['weight_decay'],
                 nesterov = self.args['nesterov'],
+            )
+        elif optimizer_type == 'novograd':
+            optim = torch_optimizer.NovoGrad(
+                param_groups,
+                lr = self.args.get('lr_max', 1e-3),
+                betas = (self.args.get('beta0', 0.95), self.args.get('beta1', 0.0)),
+                eps = self.args.get('epsilon', 1e-8),
+                weight_decay = self.args.get('weight_decay', 0.0),
+                grad_averaging = self.args.get('grad_averaging', False),
             )
         else:
             raise ValueError(f"Invalid optimizer type: {optimizer_type}")
